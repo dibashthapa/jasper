@@ -105,6 +105,29 @@ impl<'a> Visit<'a> for WasmGenerator {
         self.emit_bytecode(ByteCode::Const(value));
     }
 
+    fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
+        match &it.expression {
+            Expression::BinaryExpression(binary) => {
+                if let Expression::Identifier(_) = binary.left {
+                    // TODO: This may be hacky,idk, but it works for now.
+                    // It is used when the variable is unused, and only used as expression
+                    // ```
+                    // 1. let a = 5;
+                    // a - 5;
+                    // ```
+                    // Here a is unused, so we can drop it.
+                    self.visit_binary_expression(&binary);
+                    self.emit_bytecode(ByteCode::Drop);
+                } else {
+                    self.visit_binary_expression(&binary);
+                }
+            }
+            _ => {
+                self.visit_expression(&it.expression);
+            }
+        }
+    }
+
     fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
         let identifier = it.id.get_identifier().unwrap().into_string();
         match &it.init {
@@ -127,6 +150,7 @@ impl<'a> Visit<'a> for WasmGenerator {
             let identifer = identifier.name.to_string();
             self.emit_bytecode(ByteCode::GetGlobal(identifer));
         }
+        self.evaluate_expression(&it.left);
         self.evaluate_expression(&it.right);
         match it.operator {
             BinaryOperator::Addition => {
@@ -146,11 +170,6 @@ impl<'a> Visit<'a> for WasmGenerator {
             }
             _ => {}
         }
-    }
-
-    fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
-        let identifier = it.name.to_string();
-        self.emit_bytecode(ByteCode::GetGlobal(identifier));
     }
 
     fn visit_update_expression(&mut self, it: &oxc_ast::ast::UpdateExpression<'a>) {

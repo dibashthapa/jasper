@@ -7,6 +7,7 @@ pub enum ByteCode {
     Mul,
     Sub,
     If,
+    Drop,
     Div,
     Lt,
     BrIf(String),
@@ -32,6 +33,7 @@ impl ToString for ByteCode {
             Self::Lt => "f64.lt".to_string(),
             Self::If => "if".to_string(),
             Self::BrIf(label) => format!("br_if ${}", label),
+            Self::Drop => "drop".to_string(),
         }
     }
 }
@@ -50,6 +52,7 @@ impl std::fmt::Debug for ByteCode {
             Self::Lt => write!(f, "i32.lt"),
             Self::If => write!(f, "if"),
             Self::BrIf(label) => write!(f, "br_if ${}", label),
+            Self::Drop => write!(f, "drop"),
         }
     }
 }

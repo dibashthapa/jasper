@@ -82,6 +82,17 @@ impl<'a> Visit<'a> for ByteCodeGenerator {
         self.emit_bytecode(ByteCode::Load(register, value));
     }
 
+    // fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
+    //     match &it.expression {
+    //         Expression::BinaryExpression(binary) => {
+    //             self.visit_binary_expression(binary);
+    //         }
+    //         _ => {
+    //             self.visit_expression(&it.expression);
+    //         }
+    //     }
+    // }
+
     fn visit_binary_expression(&mut self, it: &oxc_ast::ast::BinaryExpression<'a>) {
         self.evaluate_expression(&it.left);
         let src1 = self.current_register();
