@@ -10,12 +10,13 @@ mod engine;
 mod wasm;
 
 fn main() -> Result<(), String> {
-    let name = "example.js";
+    let name = std::env::args().nth(1).ok_or("Missing file name")?;
     let path = Path::new(&name);
     let source_text = std::fs::read_to_string(path).map_err(|_| format!("Missing '{name}'"))?;
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).unwrap();
     let ret = Parser::new(&allocator, &source_text, source_type).parse();
+    // #[cfg(debug_assertions)]
     // dbg!(&ret.program);
     // let mut generator = ByteCodeGenerator::default();
     let mut wasm_generator = WasmGenerator::default();

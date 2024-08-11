@@ -38,7 +38,7 @@ impl WasmGenerator {
             self.format_globals()
         );
         for bytecode in &self.bytecodes {
-            println!(r#"    {}"#, bytecode.to_string());
+            println!(r#"    {:#?}"#, bytecode);
         }
         print!("  )\n)");
     }
@@ -101,12 +101,35 @@ impl Display for WasmGenerator {
 
 impl<'a> Visit<'a> for WasmGenerator {
     fn visit_numeric_literal(&mut self, it: &NumericLiteral<'a>) {
-        let value = it.raw.parse::<i32>().unwrap();
+        let value = it.raw.parse::<f64>().unwrap();
         self.emit_bytecode(ByteCode::Const(value));
+    }
+
+    fn visit_if_statement(&mut self, it: &oxc_ast::ast::IfStatement<'a>) {
+        self.visit_expression(&it.test);
+
+        let bytecodes_len = self.bytecodes.len();
+        self.visit_statement(&it.consequent);
+        let true_condition = self.bytecodes.split_off(bytecodes_len);
+        let mut else_condition = vec![];
+        if let Some(alternate) = &it.alternate {
+            let bytecodes_len = self.bytecodes.len();
+            self.visit_statement(alternate);
+            else_condition = self.bytecodes.split_off(bytecodes_len);
+        }
+        self.emit_bytecode(ByteCode::If(true_condition, else_condition));
+    }
+
+    fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
+        let identifier = it.name.to_string();
+        self.emit_bytecode(ByteCode::GetGlobal(identifier));
     }
 
     fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
         match &it.expression {
+            Expression::Identifier(identifier) => {
+                self.visit_identifier_reference(&identifier);
+            }
             Expression::BinaryExpression(binary) => {
                 if let Expression::Identifier(_) = binary.left {
                     // TODO: This may be hacky,idk, but it works for now.
@@ -114,6 +137,7 @@ impl<'a> Visit<'a> for WasmGenerator {
                     // ```
                     // 1. let a = 5;
                     // a - 5;
+                    // 2 + 5;
                     // ```
                     // Here a is unused, so we can drop it.
                     self.visit_binary_expression(&binary);
@@ -145,10 +169,8 @@ impl<'a> Visit<'a> for WasmGenerator {
     }
 
     fn visit_binary_expression(&mut self, it: &oxc_ast::ast::BinaryExpression<'a>) {
-        if it.left.is_identifier_reference() {
-            let identifier = it.left.get_identifier_reference().unwrap();
-            let identifer = identifier.name.to_string();
-            self.emit_bytecode(ByteCode::GetGlobal(identifer));
+        if let Expression::Identifier(ident) = &it.left {
+            self.visit_identifier_reference(&ident);
         }
         self.evaluate_expression(&it.left);
         self.evaluate_expression(&it.right);
@@ -168,15 +190,29 @@ impl<'a> Visit<'a> for WasmGenerator {
             BinaryOperator::LessThan => {
                 self.emit_bytecode(ByteCode::Lt);
             }
+            BinaryOperator::GreaterThan => {
+                self.emit_bytecode(ByteCode::Gt);
+            }
+            BinaryOperator::StrictEquality | BinaryOperator::Equality => {
+                self.emit_bytecode(ByteCode::Eq);
+            }
+
             _ => {}
         }
+    }
+
+    fn visit_assignment_expression(&mut self, it: &oxc_ast::ast::AssignmentExpression<'a>) {
+        let identifier = it.left.get_identifier().unwrap();
+        self.visit_expression(&it.right);
+        let index = self.advance();
+        self.emit_bytecode(ByteCode::SetGlobal(index, identifier.into()));
     }
 
     fn visit_update_expression(&mut self, it: &oxc_ast::ast::UpdateExpression<'a>) {
         let identifier = it.argument.get_identifier().unwrap();
         let value = &self.globals.get(&identifier.to_string()).cloned();
         self.emit_bytecode(ByteCode::GetGlobal(identifier.into()));
-        self.emit_bytecode(ByteCode::Const(1));
+        self.emit_bytecode(ByteCode::Const(1.));
         match it.operator {
             oxc_syntax::operator::UpdateOperator::Increment => {
                 self.emit_bytecode(ByteCode::Add);
