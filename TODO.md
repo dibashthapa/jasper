@@ -1,6 +1,6 @@
 ## TODO Checklist
-- [x] Implement If else
-- [ ] Implement For loop
+- [X] Implement If else
+- [X] Implement For loop
 - [X] Implement While loop
 - [ ] Implement Functions
 - [ ] Implement Classes
