@@ -16,7 +16,6 @@ fn main() -> Result<(), String> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).unwrap();
     let ret = Parser::new(&allocator, &source_text, source_type).parse();
-    // #[cfg(debug_assertions)]
     // dbg!(&ret.program);
     // let mut generator = ByteCodeGenerator::default();
     let mut wasm_generator = WasmGenerator::default();

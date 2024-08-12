@@ -17,6 +17,18 @@ pub enum ByteCode {
 
 impl std::fmt::Debug for ByteCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn fmt_with_indent(
+            statements: &[ByteCode],
+            f: &mut std::fmt::Formatter<'_>,
+            indent_level: usize,
+        ) -> std::fmt::Result {
+            let indent = " ".repeat(indent_level);
+            for statement in statements {
+                write!(f, "{}{:#?}\n", indent, statement)?;
+            }
+            Ok(())
+        }
+
         match self {
             Self::Const(num) => write!(f, "f64.const {}", num),
             Self::Add => write!(f, "f64.add"),
@@ -26,19 +38,18 @@ impl std::fmt::Debug for ByteCode {
             Self::Gt => write!(f, "f64.gt"),
             Self::SetGlobal(_, variable) => write!(f, "global.set ${}", variable),
             Self::GetGlobal(variable) => write!(f, "global.get ${}", variable),
-            Self::Loop(label, statements) => write!(f, "loop ${} {:#?}", label, statements),
+            Self::Loop(label, statements) => {
+                write!(f, "(loop ${label}        \n")?;
+                fmt_with_indent(statements, f, 8)?;
+                write!(f, "     )")
+            }
             Self::Lt => write!(f, "f64.lt"),
             Self::If(then, rest) => {
-                // make space of then relative to if
-                write!(f, "(if \n      (then \n")?;
-                for statement in then {
-                    write!(f, "         {:#?}\n", statement)?;
-                }
-                write!(f, "      )\n      (else \n")?;
-                for statement in rest {
-                    write!(f, "         {:#?}\n", statement)?;
-                }
-                write!(f, "      )\n    )")
+                write!(f, "(if\n  (then\n")?;
+                fmt_with_indent(then, f, 4)?;
+                write!(f, "  )\n  (else\n")?;
+                fmt_with_indent(rest, f, 4)?;
+                write!(f, "    )\n)")
             }
             Self::BrIf(label) => write!(f, "br_if ${}", label),
             Self::Drop => write!(f, "drop"),

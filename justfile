@@ -1,5 +1,5 @@
 convert:
-  cargo run ifelse.js 2>/dev/null > example.wat
+  cargo run for.js 2>/dev/null > example.wat
 
 build: convert
   wat2wasm example.wat -o example.wasm

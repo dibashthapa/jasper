@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 use oxc_ast::{
-    ast::{Expression, NumericLiteral, Statement},
+    ast::{Expression, ForStatementInit, NumericLiteral, Statement},
     Visit,
 };
 use oxc_syntax::operator::BinaryOperator;
@@ -100,6 +100,60 @@ impl Display for WasmGenerator {
 }
 
 impl<'a> Visit<'a> for WasmGenerator {
+    fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
+        let label = self.new_label();
+        let body = &it.body;
+        let bytecodes_len = &self.bytecodes.len();
+
+        match body {
+            Statement::BlockStatement(block) => {
+                for statement in &block.body {
+                    self.visit_statement(statement);
+                }
+            }
+            _ => {}
+        }
+
+        if let Expression::BinaryExpression(test) = &it.test {
+            self.visit_binary_expression(test);
+            self.emit_bytecode(ByteCode::BrIf(label.clone()));
+        }
+
+        let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+        self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+    }
+
+    fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
+        let label = self.new_label();
+        let body = &it.body;
+        if let Some(init) = &it.init {
+            if let ForStatementInit::VariableDeclaration(init) = init {
+                for declarator in &init.declarations {
+                    self.visit_variable_declarator(&declarator);
+                }
+            }
+        }
+        let bytecodes_len = &self.bytecodes.len();
+        match body {
+            Statement::BlockStatement(block) => {
+                for statement in &block.body {
+                    self.visit_statement(statement);
+                }
+            }
+            _ => {}
+        }
+
+        if let Some(update) = &it.update {
+            self.visit_expression(update);
+        }
+
+        if let Some(test) = &it.test {
+            self.visit_expression(test);
+            self.emit_bytecode(ByteCode::BrIf(label.clone()));
+        }
+        let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+        self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+    }
     fn visit_numeric_literal(&mut self, it: &NumericLiteral<'a>) {
         let value = it.raw.parse::<f64>().unwrap();
         self.emit_bytecode(ByteCode::Const(value));
@@ -225,28 +279,5 @@ impl<'a> Visit<'a> for WasmGenerator {
         }
         let index = self.advance();
         self.emit_bytecode(ByteCode::SetGlobal(index, identifier.into()));
-    }
-
-    fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
-        let label = self.new_label();
-        let body = &it.body;
-        let bytecodes_len = &self.bytecodes.len();
-
-        match body {
-            Statement::BlockStatement(block) => {
-                for statement in &block.body {
-                    self.visit_statement(statement);
-                }
-            }
-            _ => {}
-        }
-
-        if let Expression::BinaryExpression(test) = &it.test {
-            self.visit_binary_expression(test);
-            self.emit_bytecode(ByteCode::BrIf(label.clone()));
-        }
-
-        let bytecodes = self.bytecodes.split_off(*bytecodes_len);
-        self.emit_bytecode(ByteCode::Loop(label, bytecodes));
     }
 }

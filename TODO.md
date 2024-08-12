@@ -1,5 +1,5 @@
 ## TODO Checklist
-- [ ] Implement If else
+- [x] Implement If else
 - [ ] Implement For loop
 - [X] Implement While loop
 - [ ] Implement Functions
