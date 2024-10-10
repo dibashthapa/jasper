@@ -1,10 +1,9 @@
-use std::{collections::HashMap, fmt::Display};
-
 use oxc_ast::{
     ast::{Expression, ForStatementInit, NumericLiteral, Statement},
     Visit,
 };
 use oxc_syntax::operator::BinaryOperator;
+use std::{collections::HashMap, fmt::Display};
 
 use super::runtime::ByteCode;
 
@@ -13,6 +12,7 @@ pub struct WasmGenerator {
     pub bytecodes: Vec<ByteCode>,
     index: usize,
     label_index: usize,
+    block_index: usize,
     globals: HashMap<String, f64>,
 }
 
@@ -32,21 +32,53 @@ impl WasmGenerator {
         globals
     }
 
+    pub fn get_wat(&self) -> String {
+        let header = format!(
+            "(module  {} (func (export \"main\") (result f64)",
+            self.format_globals()
+        );
+
+        let bytecodes: Vec<String> = self
+            .bytecodes
+            .iter()
+            .map(|bytecode| format!(r#"    {:#?}"#, bytecode))
+            .collect();
+
+        let bytecodes = bytecodes.join("\n");
+
+        return format!("{} {} ))", header, bytecodes);
+    }
+
     pub fn print_bytecode(&self) {
         println!(
-            "(module {} (func (export \"main\") (result f64)",
+            "(module \n {} (func (export \"main\") (result f64)",
             self.format_globals()
         );
         for bytecode in &self.bytecodes {
             println!(r#"    {:#?}"#, bytecode);
         }
-        print!("  )\n)");
+
+        print!("    )\n)");
     }
 
     fn advance(&mut self) -> usize {
         let index = self.index;
         self.index += 1;
         index
+    }
+
+    fn current_label(&self) -> String {
+        format!("label_{}", self.label_index - 1)
+    }
+
+    fn new_block(&mut self) -> String {
+        let block = format!("block_{}", self.block_index);
+        self.block_index += 1;
+        block
+    }
+
+    fn current_block(&self) -> String {
+        format!("block_{}", self.block_index - 1)
     }
 
     fn new_label(&mut self) -> String {
@@ -100,6 +132,15 @@ impl Display for WasmGenerator {
 }
 
 impl<'a> Visit<'a> for WasmGenerator {
+    fn visit_break_statement(&mut self, _: &oxc_ast::ast::BreakStatement<'a>) {
+        let new_block = self.new_block();
+        self.emit_bytecode(ByteCode::Br(new_block));
+    }
+
+    // fn visit_continue_statement(&mut self, _: &oxc_ast::ast::ContinueStatement<'a>) {
+    //     self.emit_bytecode(ByteCode::Br(self.current_label()));
+    // }
+
     fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
         let label = self.new_label();
         let body = &it.body;
@@ -119,8 +160,15 @@ impl<'a> Visit<'a> for WasmGenerator {
             self.emit_bytecode(ByteCode::BrIf(label.clone()));
         }
 
-        let bytecodes = self.bytecodes.split_off(*bytecodes_len);
-        self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+        if self.block_index > 0 {
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Block(self.current_block(), bytecodes));
+        } else {
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+        }
     }
 
     fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
@@ -151,8 +199,15 @@ impl<'a> Visit<'a> for WasmGenerator {
             self.visit_expression(test);
             self.emit_bytecode(ByteCode::BrIf(label.clone()));
         }
-        let bytecodes = self.bytecodes.split_off(*bytecodes_len);
-        self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+        if self.block_index > 0 {
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Block(self.current_block(), bytecodes));
+        } else {
+            let bytecodes = self.bytecodes.split_off(*bytecodes_len);
+            self.emit_bytecode(ByteCode::Loop(label, bytecodes));
+        }
     }
     fn visit_numeric_literal(&mut self, it: &NumericLiteral<'a>) {
         let value = it.raw.parse::<f64>().unwrap();
@@ -210,6 +265,9 @@ impl<'a> Visit<'a> for WasmGenerator {
         let identifier = it.id.get_identifier().unwrap().into_string();
         match &it.init {
             Some(init) => {
+                // if let Expression::StringLiteral(string_literal) = init {
+                //     self.emit_bytecode(ByteCode::Const(string_literal.value.to_string()));
+                // }
                 let value = self.evaluate_expression(&init);
                 self.globals.insert(identifier.clone(), value);
             }
@@ -264,17 +322,14 @@ impl<'a> Visit<'a> for WasmGenerator {
 
     fn visit_update_expression(&mut self, it: &oxc_ast::ast::UpdateExpression<'a>) {
         let identifier = it.argument.get_identifier().unwrap();
-        let value = &self.globals.get(&identifier.to_string()).cloned();
         self.emit_bytecode(ByteCode::GetGlobal(identifier.into()));
         self.emit_bytecode(ByteCode::Const(1.));
         match it.operator {
             oxc_syntax::operator::UpdateOperator::Increment => {
                 self.emit_bytecode(ByteCode::Add);
-                self.globals.insert(identifier.into(), value.unwrap() + 1.0);
             }
             oxc_syntax::operator::UpdateOperator::Decrement => {
                 self.emit_bytecode(ByteCode::Sub);
-                self.globals.insert(identifier.into(), value.unwrap() - 1.0);
             }
         }
         let index = self.advance();

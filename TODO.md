@@ -1,8 +1,12 @@
 ## TODO Checklist
 - [X] Implement If else
 - [X] Implement For loop
+- [ ] Implement Break, Continue
 - [X] Implement While loop
-- [ ] Implement Functions
+- [X] Implement Functions
+- [ ] Implement Strings
+- [ ] Implement Arrays
 - [ ] Implement Classes
 - [ ] Implement Scopes, Closures
+- [ ] Implement Objects
 - [ ] Create Test262 test runner

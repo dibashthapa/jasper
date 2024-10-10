@@ -1,8 +1,8 @@
-convert:
-  cargo run for.js 2>/dev/null > example.wat
+convert input:
+    cargo run -- {{input}} 2>/dev/null > {{without_extension(input)}}.wat
 
-build: convert
-  wat2wasm example.wat -o example.wasm
+build input: (convert input)
+    wat2wasm {{without_extension(input)}}.wat -o {{without_extension(input)}}.wasm
 
-run: build
- wasm-interp --run-all-exports example.wasm
+run input: (build input)
+    wasm-interp --run-all-exports {{without_extension(input)}}.wasm

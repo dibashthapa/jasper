@@ -4,10 +4,12 @@ pub enum ByteCode {
     SetGlobal(usize, String),
     Add,
     Loop(String, Vec<ByteCode>),
+    Block(String, Vec<ByteCode>),
     Mul,
     Sub,
     If(Vec<ByteCode>, Vec<ByteCode>),
     Drop,
+    Br(String),
     Div,
     Lt,
     Eq,
@@ -38,6 +40,12 @@ impl std::fmt::Debug for ByteCode {
             Self::Gt => write!(f, "f64.gt"),
             Self::SetGlobal(_, variable) => write!(f, "global.set ${}", variable),
             Self::GetGlobal(variable) => write!(f, "global.get ${}", variable),
+            Self::Block(label, statements) => {
+                write!(f, "(block ${label}        \n")?;
+                fmt_with_indent(statements, f, 8)?;
+                write!(f, "     )")
+            }
+
             Self::Loop(label, statements) => {
                 write!(f, "(loop ${label}        \n")?;
                 fmt_with_indent(statements, f, 8)?;
@@ -52,6 +60,7 @@ impl std::fmt::Debug for ByteCode {
                 write!(f, "    )\n)")
             }
             Self::BrIf(label) => write!(f, "br_if ${}", label),
+            Self::Br(label) => write!(f, "br ${}", label),
             Self::Drop => write!(f, "drop"),
             Self::Eq => write!(f, "f64.eq"),
         }
