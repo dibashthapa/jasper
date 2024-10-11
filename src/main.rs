@@ -7,9 +7,15 @@ use oxc_parser::Parser;
 use oxc_span::SourceType;
 use std::path::Path;
 use wasm::generator::WasmGenerator;
-mod engine;
 mod wasm;
 use anyhow::Result;
+
+fn alloc(len: usize) -> *mut u8 {
+    let mut buf = Vec::with_capacity(len);
+    let ptr = buf.as_mut_ptr();
+    std::mem::forget(buf);
+    return ptr;
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let name = std::env::args().nth(1).ok_or("Missing file name").unwrap();
@@ -18,7 +24,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).unwrap();
     let ret = Parser::new(&allocator, &source_text, source_type).parse();
-    // let mut generator = ByteCodeGenerator::default();
     let mut wasm_generator = WasmGenerator::default();
     wasm_generator.visit_program(&ret.program);
     wasm_generator.print_bytecode();

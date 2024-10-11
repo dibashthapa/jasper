@@ -46,7 +46,7 @@ impl WasmGenerator {
 
         let bytecodes = bytecodes.join("\n");
 
-        return format!("{} {} ))", header, bytecodes);
+        format!("{} {} ))", header, bytecodes)
     }
 
     pub fn print_bytecode(&self) {
@@ -125,7 +125,7 @@ impl WasmGenerator {
 impl Display for WasmGenerator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for bytecode in &self.bytecodes {
-            write!(f, "{:?}\n", bytecode)?;
+            writeln!(f, "{:?}", bytecode)?;
         }
         Ok(())
     }
@@ -137,22 +137,15 @@ impl<'a> Visit<'a> for WasmGenerator {
         self.emit_bytecode(ByteCode::Br(new_block));
     }
 
-    // fn visit_continue_statement(&mut self, _: &oxc_ast::ast::ContinueStatement<'a>) {
-    //     self.emit_bytecode(ByteCode::Br(self.current_label()));
-    // }
-
     fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
         let label = self.new_label();
         let body = &it.body;
         let bytecodes_len = &self.bytecodes.len();
 
-        match body {
-            Statement::BlockStatement(block) => {
-                for statement in &block.body {
-                    self.visit_statement(statement);
-                }
+        if let Statement::BlockStatement(block) = body {
+            for statement in &block.body {
+                self.visit_statement(statement);
             }
-            _ => {}
         }
 
         if let Expression::BinaryExpression(test) = &it.test {
@@ -174,21 +167,16 @@ impl<'a> Visit<'a> for WasmGenerator {
     fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
         let label = self.new_label();
         let body = &it.body;
-        if let Some(init) = &it.init {
-            if let ForStatementInit::VariableDeclaration(init) = init {
-                for declarator in &init.declarations {
-                    self.visit_variable_declarator(&declarator);
-                }
+        if let Some(ForStatementInit::VariableDeclaration(init)) = &it.init {
+            for declarator in &init.declarations {
+                self.visit_variable_declarator(declarator);
             }
         }
         let bytecodes_len = &self.bytecodes.len();
-        match body {
-            Statement::BlockStatement(block) => {
-                for statement in &block.body {
-                    self.visit_statement(statement);
-                }
+        if let Statement::BlockStatement(block) = body {
+            for statement in &block.body {
+                self.visit_statement(statement);
             }
-            _ => {}
         }
 
         if let Some(update) = &it.update {
@@ -237,7 +225,7 @@ impl<'a> Visit<'a> for WasmGenerator {
     fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
         match &it.expression {
             Expression::Identifier(identifier) => {
-                self.visit_identifier_reference(&identifier);
+                self.visit_identifier_reference(identifier);
             }
             Expression::BinaryExpression(binary) => {
                 if let Expression::Identifier(_) = binary.left {
@@ -249,10 +237,10 @@ impl<'a> Visit<'a> for WasmGenerator {
                     // 2 + 5;
                     // ```
                     // Here a is unused, so we can drop it.
-                    self.visit_binary_expression(&binary);
+                    self.visit_binary_expression(binary);
                     self.emit_bytecode(ByteCode::Drop);
                 } else {
-                    self.visit_binary_expression(&binary);
+                    self.visit_binary_expression(binary);
                 }
             }
             _ => {
@@ -265,10 +253,10 @@ impl<'a> Visit<'a> for WasmGenerator {
         let identifier = it.id.get_identifier().unwrap().into_string();
         match &it.init {
             Some(init) => {
-                // if let Expression::StringLiteral(string_literal) = init {
-                //     self.emit_bytecode(ByteCode::Const(string_literal.value.to_string()));
-                // }
-                let value = self.evaluate_expression(&init);
+                if let Expression::StringLiteral(string_literal) = init {
+                    self.emit_bytecode(ByteCode::ConstString(string_literal.value.to_string()));
+                }
+                let value = self.evaluate_expression(init);
                 self.globals.insert(identifier.clone(), value);
             }
             None => {
@@ -282,7 +270,7 @@ impl<'a> Visit<'a> for WasmGenerator {
 
     fn visit_binary_expression(&mut self, it: &oxc_ast::ast::BinaryExpression<'a>) {
         if let Expression::Identifier(ident) = &it.left {
-            self.visit_identifier_reference(&ident);
+            self.visit_identifier_reference(ident);
         }
         self.evaluate_expression(&it.left);
         self.evaluate_expression(&it.right);

@@ -1,5 +1,6 @@
 pub enum ByteCode {
     Const(f64),
+    ConstString(String),
     GetGlobal(String),
     SetGlobal(usize, String),
     Add,
@@ -26,7 +27,7 @@ impl std::fmt::Debug for ByteCode {
         ) -> std::fmt::Result {
             let indent = " ".repeat(indent_level);
             for statement in statements {
-                write!(f, "{}{:#?}\n", indent, statement)?;
+                writeln!(f, "{}{:#?}", indent, statement)?;
             }
             Ok(())
         }
@@ -41,13 +42,13 @@ impl std::fmt::Debug for ByteCode {
             Self::SetGlobal(_, variable) => write!(f, "global.set ${}", variable),
             Self::GetGlobal(variable) => write!(f, "global.get ${}", variable),
             Self::Block(label, statements) => {
-                write!(f, "(block ${label}        \n")?;
+                writeln!(f, "(block ${label}        ")?;
                 fmt_with_indent(statements, f, 8)?;
                 write!(f, "     )")
             }
 
             Self::Loop(label, statements) => {
-                write!(f, "(loop ${label}        \n")?;
+                writeln!(f, "(loop ${label}        ")?;
                 fmt_with_indent(statements, f, 8)?;
                 write!(f, "     )")
             }
@@ -63,13 +64,7 @@ impl std::fmt::Debug for ByteCode {
             Self::Br(label) => write!(f, "br ${}", label),
             Self::Drop => write!(f, "drop"),
             Self::Eq => write!(f, "f64.eq"),
+            Self::ConstString(string) => write!(f, "{string}"),
         }
     }
-}
-
-struct Vm {
-    registers: [f64; 8],
-    pc: usize,
-    stack: Vec<f64>,
-    program: Vec<ByteCode>,
 }
