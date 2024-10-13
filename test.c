@@ -1,9 +1,11 @@
 #include <stdio.h>
-
 int main() {
-  char c[200] = "Hello";
-  char b[200] = "world";
-  c[20] = 'd';
-  printf("c is %s and b is %s", c, b);
+    char a[] = "Hello";
+    char b[] = "Hello";
+    char c[] = "Hello";
+    char d[] = "Hello";
+    char e[] = "Hello";
+    char f[] = "Hello";
+    printf("%s %s %s %s %s %s", a, b,c, d, e, f);
   return 0;
 }

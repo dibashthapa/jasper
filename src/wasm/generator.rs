@@ -7,13 +7,45 @@ use std::{collections::HashMap, fmt::Display};
 
 use super::runtime::ByteCode;
 
+#[derive(Debug)]
+enum JsValue {
+    Integer(i32),
+    Float(f64),
+    String(i32),
+}
+
+impl JsValue {
+    fn is_string(&self) -> bool {
+        matches!(self, Self::String(_))
+    }
+
+    fn get_offset(&self) -> Option<&i32> {
+        if let JsValue::String(offset) = self {
+            Some(offset)
+        } else {
+            None
+        }
+    }
+}
+
+impl Display for JsValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Float(value) => write!(f, "(f64.const {})", value),
+            Self::Integer(value) => write!(f, "(i32.const {})", value),
+            Self::String(value) => write!(f, "(i32.const {})", value),
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct WasmGenerator {
     pub bytecodes: Vec<ByteCode>,
-    index: usize,
+    data: Vec<String>,
     label_index: usize,
     block_index: usize,
-    globals: HashMap<String, f64>,
+    current_offset: usize,
+    globals: HashMap<String, JsValue>,
 }
 
 impl WasmGenerator {
@@ -21,21 +53,36 @@ impl WasmGenerator {
         self.bytecodes.push(bytecode);
     }
 
+    fn emit_data(&mut self, str_value: String) {
+        self.data.push(format!(
+            "(data (i32.const {}) \"{}\")",
+            self.current_offset, str_value
+        ));
+        self.current_offset += str_value.len();
+    }
+
     fn format_globals(&self) -> String {
         let mut globals = String::new();
         for (name, value) in &self.globals {
-            globals.push_str(&format!(
-                "(global ${} (mut f64) (f64.const {}))\n",
-                name, value
-            ));
+            match value {
+                JsValue::Float(_) => {
+                    globals.push_str(&format!("(global ${} (mut f64) {})\n", name, value))
+                }
+                JsValue::Integer(_) | JsValue::String(_) => {
+                    globals.push_str(&format!("(global ${} (mut i32) {})\n", name, value))
+                }
+            }
         }
         globals
     }
 
     pub fn get_wat(&self) -> String {
+        let data_segments = self.data.join("\n");
+
         let header = format!(
-            "(module  {} (func (export \"main\") (result f64)",
-            self.format_globals()
+            "(module\n(import \"\" \"\" (func $log_str (param i32) (param i32)))\n(memory (export \"memory\") 1) \n {} {} \n (func (export \"main\")",
+            self.format_globals(),
+            data_segments
         );
 
         let bytecodes: Vec<String> = self
@@ -46,29 +93,7 @@ impl WasmGenerator {
 
         let bytecodes = bytecodes.join("\n");
 
-        format!("{} {} ))", header, bytecodes)
-    }
-
-    pub fn print_bytecode(&self) {
-        println!(
-            "(module \n {} (func (export \"main\") (result f64)",
-            self.format_globals()
-        );
-        for bytecode in &self.bytecodes {
-            println!(r#"    {:#?}"#, bytecode);
-        }
-
-        print!("    )\n)");
-    }
-
-    fn advance(&mut self) -> usize {
-        let index = self.index;
-        self.index += 1;
-        index
-    }
-
-    fn current_label(&self) -> String {
-        format!("label_{}", self.label_index - 1)
+        format!("{}\n{}\nreturn ))", header, bytecodes)
     }
 
     fn new_block(&mut self) -> String {
@@ -219,7 +244,19 @@ impl<'a> Visit<'a> for WasmGenerator {
 
     fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
         let identifier = it.name.to_string();
-        self.emit_bytecode(ByteCode::GetGlobal(identifier));
+        if let Some(ident) = self.globals.get(&identifier) {
+            if ident.is_string() {
+                let offset = ident.get_offset();
+                self.emit_bytecode(ByteCode::IntConst(*offset.unwrap()));
+                self.emit_bytecode(ByteCode::GetGlobal(format!(
+                    "_______{}_____len",
+                    identifier
+                )));
+                self.emit_bytecode(ByteCode::Call("log_str".into()));
+            } else {
+                self.emit_bytecode(ByteCode::GetGlobal(identifier));
+            }
+        }
     }
 
     fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
@@ -228,7 +265,7 @@ impl<'a> Visit<'a> for WasmGenerator {
                 self.visit_identifier_reference(identifier);
             }
             Expression::BinaryExpression(binary) => {
-                if let Expression::Identifier(_) = binary.left {
+                if let Expression::Identifier(ident) = &binary.left {
                     // TODO: This may be hacky,idk, but it works for now.
                     // It is used when the variable is unused, and only used as expression
                     // ```
@@ -237,6 +274,7 @@ impl<'a> Visit<'a> for WasmGenerator {
                     // 2 + 5;
                     // ```
                     // Here a is unused, so we can drop it.
+
                     self.visit_binary_expression(binary);
                     self.emit_bytecode(ByteCode::Drop);
                 } else {
@@ -254,18 +292,26 @@ impl<'a> Visit<'a> for WasmGenerator {
         match &it.init {
             Some(init) => {
                 if let Expression::StringLiteral(string_literal) = init {
-                    self.emit_bytecode(ByteCode::ConstString(string_literal.value.to_string()));
+                    let value = string_literal.value.to_string();
+                    self.globals.insert(
+                        identifier.clone(),
+                        JsValue::String(self.current_offset as i32),
+                    );
+                    self.globals.insert(
+                        format!("_______{}_____len", identifier.clone()),
+                        JsValue::Integer(value.len() as i32),
+                    );
+                    self.emit_data(value);
+                } else {
+                    let value = self.evaluate_expression(init);
+                    self.globals
+                        .insert(identifier.clone(), JsValue::Float(value));
                 }
-                let value = self.evaluate_expression(init);
-                self.globals.insert(identifier.clone(), value);
             }
             None => {
-                self.globals.insert(identifier.clone(), 0.);
+                self.globals.insert(identifier.clone(), JsValue::Float(0.));
             }
         }
-
-        let index = self.advance();
-        self.emit_bytecode(ByteCode::SetGlobal(index, identifier));
     }
 
     fn visit_binary_expression(&mut self, it: &oxc_ast::ast::BinaryExpression<'a>) {
@@ -304,8 +350,7 @@ impl<'a> Visit<'a> for WasmGenerator {
     fn visit_assignment_expression(&mut self, it: &oxc_ast::ast::AssignmentExpression<'a>) {
         let identifier = it.left.get_identifier().unwrap();
         self.visit_expression(&it.right);
-        let index = self.advance();
-        self.emit_bytecode(ByteCode::SetGlobal(index, identifier.into()));
+        self.emit_bytecode(ByteCode::SetGlobal(identifier.into()));
     }
 
     fn visit_update_expression(&mut self, it: &oxc_ast::ast::UpdateExpression<'a>) {
@@ -320,7 +365,6 @@ impl<'a> Visit<'a> for WasmGenerator {
                 self.emit_bytecode(ByteCode::Sub);
             }
         }
-        let index = self.advance();
-        self.emit_bytecode(ByteCode::SetGlobal(index, identifier.into()));
+        self.emit_bytecode(ByteCode::SetGlobal(identifier.into()));
     }
 }

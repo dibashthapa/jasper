@@ -7,3 +7,5 @@ https://charlycst.github.io/posts/wasm-memory-allocator/
 https://burgers.io/complete-novice-wasm-allocator
 https://healeycodes.com/a-custom-webassembly-compiler
 https://skanehira.github.io/writing-a-wasm-runtime-in-rust/14_build_runtime_wasi.html
+https://cohost.org/eniko/post/171803-basic-memory-allocat
+https://rust-hosted-langs.github.io/book/introduction.html

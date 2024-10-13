@@ -5,83 +5,94 @@
 _main:                                  ; @main
 	.cfi_startproc
 ; %bb.0:
-	stp	x28, x27, [sp, #-32]!           ; 16-byte Folded Spill
-	.cfi_def_cfa_offset 32
-	stp	x29, x30, [sp, #16]             ; 16-byte Folded Spill
-	add	x29, sp, #16
+	sub	sp, sp, #128
+	.cfi_def_cfa_offset 128
+	stp	x29, x30, [sp, #112]            ; 16-byte Folded Spill
+	add	x29, sp, #112
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-	.cfi_offset w27, -24
-	.cfi_offset w28, -32
-	sub	sp, sp, #480
-	adrp	x8, ___stack_chk_guard@GOTPAGE
-	ldr	x8, [x8, ___stack_chk_guard@GOTPAGEOFF]
-	ldr	x8, [x8]
-	stur	x8, [x29, #-24]
-	mov	w1, #0
-	str	w1, [sp, #28]                   ; 4-byte Folded Spill
-	str	wzr, [sp, #68]
-	sub	x0, x29, #224
-	str	x0, [sp, #48]                   ; 8-byte Folded Spill
-	mov	x2, #200
-	str	x2, [sp, #32]                   ; 8-byte Folded Spill
-	bl	_memset
-	ldr	w1, [sp, #28]                   ; 4-byte Folded Reload
-	ldr	x2, [sp, #32]                   ; 8-byte Folded Reload
-	mov	w8, #72
-	sturb	w8, [x29, #-224]
-	mov	w8, #101
-	sturb	w8, [x29, #-223]
-	mov	w8, #108
-	str	w8, [sp, #44]                   ; 4-byte Folded Spill
-	sturb	w8, [x29, #-222]
-	sturb	w8, [x29, #-221]
-	mov	w8, #111
-	str	w8, [sp, #40]                   ; 4-byte Folded Spill
-	sturb	w8, [x29, #-220]
-	add	x0, sp, #72
-	str	x0, [sp, #56]                   ; 8-byte Folded Spill
-	bl	_memset
-	ldr	w11, [sp, #40]                  ; 4-byte Folded Reload
-	ldr	w9, [sp, #44]                   ; 4-byte Folded Reload
-	ldr	x10, [sp, #48]                  ; 8-byte Folded Reload
-	ldr	x8, [sp, #56]                   ; 8-byte Folded Reload
-	mov	w12, #119
-	strb	w12, [sp, #72]
-	strb	w11, [sp, #73]
-	mov	w11, #114
-	strb	w11, [sp, #74]
-	strb	w9, [sp, #75]
-	mov	w9, #100
-	strb	w9, [sp, #76]
-	sturb	w9, [x29, #-204]
+	mov	w8, #0
+	str	w8, [sp, #56]                   ; 4-byte Folded Spill
+	stur	wzr, [x29, #-4]
+	adrp	x8, l___const.main.a@PAGE
+	add	x8, x8, l___const.main.a@PAGEOFF
+	ldr	w9, [x8]
+	sub	x14, x29, #12
+	stur	w9, [x29, #-12]
+	ldrh	w8, [x8, #4]
+	sturh	w8, [x29, #-8]
+	adrp	x8, l___const.main.b@PAGE
+	add	x8, x8, l___const.main.b@PAGEOFF
+	ldr	w9, [x8]
+	sub	x13, x29, #20
+	stur	w9, [x29, #-20]
+	ldrh	w8, [x8, #4]
+	sturh	w8, [x29, #-16]
+	adrp	x8, l___const.main.c@PAGE
+	add	x8, x8, l___const.main.c@PAGEOFF
+	ldr	w9, [x8]
+	sub	x12, x29, #28
+	stur	w9, [x29, #-28]
+	ldrh	w8, [x8, #4]
+	sturh	w8, [x29, #-24]
+	adrp	x8, l___const.main.d@PAGE
+	add	x8, x8, l___const.main.d@PAGEOFF
+	ldr	w9, [x8]
+	sub	x11, x29, #36
+	stur	w9, [x29, #-36]
+	ldrh	w8, [x8, #4]
+	sturh	w8, [x29, #-32]
+	adrp	x8, l___const.main.e@PAGE
+	add	x8, x8, l___const.main.e@PAGEOFF
+	ldr	w9, [x8]
+	sub	x10, x29, #44
+	stur	w9, [x29, #-44]
+	ldrh	w8, [x8, #4]
+	sturh	w8, [x29, #-40]
+	adrp	x9, l___const.main.f@PAGE
+	add	x9, x9, l___const.main.f@PAGEOFF
+	ldr	w15, [x9]
+	sub	x8, x29, #52
+	stur	w15, [x29, #-52]
+	ldrh	w9, [x9, #4]
+	sturh	w9, [x29, #-48]
 	mov	x9, sp
-	str	x10, [x9]
-	str	x8, [x9, #8]
+	str	x14, [x9]
+	str	x13, [x9, #8]
+	str	x12, [x9, #16]
+	str	x11, [x9, #24]
+	str	x10, [x9, #32]
+	str	x8, [x9, #40]
 	adrp	x0, l_.str@PAGE
 	add	x0, x0, l_.str@PAGEOFF
 	bl	_printf
-	ldur	x9, [x29, #-24]
-	adrp	x8, ___stack_chk_guard@GOTPAGE
-	ldr	x8, [x8, ___stack_chk_guard@GOTPAGEOFF]
-	ldr	x8, [x8]
-	subs	x8, x8, x9
-	cset	w8, eq
-	tbnz	w8, #0, LBB0_2
-	b	LBB0_1
-LBB0_1:
-	bl	___stack_chk_fail
-LBB0_2:
-	mov	w0, #0
-	add	sp, sp, #480
-	ldp	x29, x30, [sp, #16]             ; 16-byte Folded Reload
-	ldp	x28, x27, [sp], #32             ; 16-byte Folded Reload
+	ldr	w0, [sp, #56]                   ; 4-byte Folded Reload
+	ldp	x29, x30, [sp, #112]            ; 16-byte Folded Reload
+	add	sp, sp, #128
 	ret
 	.cfi_endproc
                                         ; -- End function
 	.section	__TEXT,__cstring,cstring_literals
+l___const.main.a:                       ; @__const.main.a
+	.asciz	"Hello"
+
+l___const.main.b:                       ; @__const.main.b
+	.asciz	"Hello"
+
+l___const.main.c:                       ; @__const.main.c
+	.asciz	"Hello"
+
+l___const.main.d:                       ; @__const.main.d
+	.asciz	"Hello"
+
+l___const.main.e:                       ; @__const.main.e
+	.asciz	"Hello"
+
+l___const.main.f:                       ; @__const.main.f
+	.asciz	"Hello"
+
 l_.str:                                 ; @.str
-	.asciz	"c is %s and b is %s"
+	.asciz	"%s %s %s %s %s %s"
 
 .subsections_via_symbols

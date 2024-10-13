@@ -1,8 +1,9 @@
 pub enum ByteCode {
     Const(f64),
-    ConstString(String),
+    IntConst(i32),
+    Call(String),
     GetGlobal(String),
-    SetGlobal(usize, String),
+    SetGlobal(String),
     Add,
     Loop(String, Vec<ByteCode>),
     Block(String, Vec<ByteCode>),
@@ -34,12 +35,13 @@ impl std::fmt::Debug for ByteCode {
 
         match self {
             Self::Const(num) => write!(f, "f64.const {}", num),
+            Self::IntConst(num) => write!(f, "i32.const {}", num),
             Self::Add => write!(f, "f64.add"),
             Self::Mul => write!(f, "f64.mul"),
             Self::Sub => write!(f, "f64.sub"),
             Self::Div => write!(f, "f64.div"),
             Self::Gt => write!(f, "f64.gt"),
-            Self::SetGlobal(_, variable) => write!(f, "global.set ${}", variable),
+            Self::SetGlobal(variable) => write!(f, "global.set ${}", variable),
             Self::GetGlobal(variable) => write!(f, "global.get ${}", variable),
             Self::Block(label, statements) => {
                 writeln!(f, "(block ${label}        ")?;
@@ -61,10 +63,10 @@ impl std::fmt::Debug for ByteCode {
                 write!(f, "    )\n)")
             }
             Self::BrIf(label) => write!(f, "br_if ${}", label),
+            Self::Call(function) => write!(f, "call ${function}"),
             Self::Br(label) => write!(f, "br ${}", label),
             Self::Drop => write!(f, "drop"),
             Self::Eq => write!(f, "f64.eq"),
-            Self::ConstString(string) => write!(f, "{string}"),
         }
     }
 }
