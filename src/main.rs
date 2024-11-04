@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wasm_generator = WasmGenerator::default();
     wasm_generator.visit_program(&ret.program);
     let wat = wasm_generator.get_wat();
-    fs::write("random.wat", &wat)?;
+    println!("{}", wat);
     let engine = Engine::default();
     let module = Module::new(&engine, wat)?;
     let mut store = Store::new(&engine, ());
