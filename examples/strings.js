@@ -1,5 +1,3 @@
-const c = 1;
-const a = 'hello';
+const a = 'क छ ';
 const b = 'world';
-a;
-b;
+a + b;

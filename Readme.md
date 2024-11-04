@@ -9,3 +9,6 @@ https://healeycodes.com/a-custom-webassembly-compiler
 https://skanehira.github.io/writing-a-wasm-runtime-in-rust/14_build_runtime_wasi.html
 https://cohost.org/eniko/post/171803-basic-memory-allocat
 https://rust-hosted-langs.github.io/book/introduction.html
+https://openhome.cc/eGossip/WebAssembly/String.html
+https://www.maybeuninit.com/2022/05/31/concat-wasm.html
+https://yangdanny97.github.io/blog/2022/10/11/chocopy-wasm-backend
