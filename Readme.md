@@ -12,3 +12,5 @@ https://rust-hosted-langs.github.io/book/introduction.html
 https://openhome.cc/eGossip/WebAssembly/String.html
 https://www.maybeuninit.com/2022/05/31/concat-wasm.html
 https://yangdanny97.github.io/blog/2022/10/11/chocopy-wasm-backend
+https://coderundebug.com/learn/wat/tables/#callbacks
+https://www.mirkosertic.de/blog/2018/01/object-oriented-webassembly/

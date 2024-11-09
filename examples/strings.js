@@ -1,3 +1,2 @@
-const a = 'क छ ';
-const b = 'world';
-a + b;
+"I love" + ('b' + 'a' + 'n' + "a" + "n" + "a")
+

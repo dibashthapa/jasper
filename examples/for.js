@@ -1,5 +1,5 @@
-var x = 5;
+var x = 23.4;
 for (var i = 0; i < 2; i++) {
   x = x * 3;
 }
-x;
+__numberLog__(x);

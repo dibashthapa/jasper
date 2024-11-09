@@ -1,12 +1,11 @@
 #![allow(clippy::print_stdout)]
 use oxc_allocator::Allocator;
-use oxc_ast::Visit;
 use wasmtime::*;
 
-use oxc_parser::Parser;
+use oxc_parser::{Parser, ParserReturn};
 use oxc_span::SourceType;
 use std::{fs, path::Path};
-use wasm::generator::WasmGenerator;
+use wasm::generator::CompileContext;
 mod wasm;
 use anyhow::Result;
 
@@ -16,16 +15,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_text = std::fs::read_to_string(path).map_err(|_| format!("Missing '{name}'"))?;
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).unwrap();
-    let ret = Parser::new(&allocator, &source_text, source_type).parse();
-    let mut wasm_generator = WasmGenerator::default();
-    wasm_generator.visit_program(&ret.program);
-    let wat = wasm_generator.get_wat();
-    println!("{}", wat);
+    let ParserReturn {
+        program, errors, ..
+    } = Parser::new(&allocator, &source_text, source_type).parse();
+    assert_eq!(errors.len(), 0);
+    let mut compiler = CompileContext::default();
+    compiler.compile_statements(&program.body);
+    let output = compiler.finish();
+    // println!("{}", output);
+    // wasm_generator.visit_program(&ret.program);
+    // let wat = wasm_generator.get_wat();
+    fs::write("random.wat", &output)?;
     let engine = Engine::default();
-    let module = Module::new(&engine, wat)?;
+    let module = Module::new(&engine, output)?;
     let mut store = Store::new(&engine, ());
+    let print_num = wasm::console::print_num(&mut store);
     let print_str = wasm::console::print_str(&mut store);
-    let instance = Instance::new(&mut store, &module, &[print_str.into()])?;
+    let instance = Instance::new(&mut store, &module, &[print_str.into(), print_num.into()])?;
     let main_func = instance.get_typed_func::<(), ()>(&mut store, "main")?;
     main_func.call(&mut store, ())?;
     Ok(())

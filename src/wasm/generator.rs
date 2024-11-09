@@ -1,19 +1,53 @@
-use oxc_ast::{
-    ast::{Expression, ForStatementInit, NumericLiteral, Statement},
-    Visit,
+use oxc_ast::ast::{
+    self, AssignmentExpression, BinaryExpression, BooleanLiteral, CallExpression, Expression,
+    ExpressionStatement, ForStatement, ForStatementInit, IdentifierReference, NumericLiteral,
+    ParenthesizedExpression, Statement, StringLiteral, UnaryExpression, UpdateExpression,
+    VariableDeclaration, VariableDeclarationKind,
 };
-use oxc_syntax::operator::BinaryOperator;
+use oxc_syntax::operator::{self, BinaryOperator};
 use std::{
     collections::HashMap,
-    fmt::Display,
     ops::{Add, Div, Mul, Sub},
 };
+
+#[derive(Debug, Clone, PartialEq)]
+enum ExpressionType {
+    Number,
+    String,
+    I64,
+    I32,
+    F64,
+    Function,
+    Unknown,
+}
+
+struct ExpressionContext {
+    expr_type: ExpressionType,
+    string_offset: Option<i32>,
+}
+
+impl ExpressionContext {
+    fn new(expr_type: ExpressionType) -> Option<Self> {
+        Some(Self {
+            expr_type,
+            string_offset: None,
+        })
+    }
+
+    fn with_offset(expr_type: ExpressionType, offset: i32) -> Option<Self> {
+        Some(Self {
+            expr_type,
+            string_offset: Some(offset),
+        })
+    }
+}
 
 pub enum Instruction {
     Const(f64),
     IntConst(i32),
     Call(String),
     GetGlobal(String),
+    TeeGlobal(String),
     SetGlobal(String),
     I32Add,
     F64Add,
@@ -58,6 +92,7 @@ impl std::fmt::Debug for Instruction {
             Self::Gt => write!(f, "f64.gt"),
             Self::SetGlobal(variable) => write!(f, "global.set ${}", variable),
             Self::GetGlobal(variable) => write!(f, "global.get ${}", variable),
+            Self::TeeGlobal(variable) => write!(f, "global.tee ${}", variable),
             Self::Block(label, statements) => {
                 writeln!(f, "(block ${label}        ")?;
                 fmt_with_indent(statements, f, 8)?;
@@ -155,17 +190,24 @@ impl JsValue {
     }
 }
 
-#[derive(Debug)]
-pub struct WasmGenerator {
-    pub instructions: Vec<Instruction>,
+#[derive(PartialEq)]
+enum ValueType {
+    String,
+    Integer,
+    Float,
+}
+
+pub struct CompileContext {
+    instructions: Vec<Instruction>,
     data: Vec<String>,
-    label_index: usize,
+    stack: Vec<ValueType>,
     block_index: usize,
+    label_index: usize,
     current_offset: usize,
     globals: HashMap<String, JsValue>,
 }
 
-impl Default for WasmGenerator {
+impl Default for CompileContext {
     fn default() -> Self {
         Self {
             instructions: vec![],
@@ -174,41 +216,24 @@ impl Default for WasmGenerator {
             block_index: 0,
             current_offset: 1,
             globals: HashMap::new(),
+            stack: vec![],
         }
     }
 }
 
-impl WasmGenerator {
+impl CompileContext {
     fn emit_instruction(&mut self, instruction: Instruction) {
         self.instructions.push(instruction);
     }
 
-    fn handle_string_concat(&mut self, left: JsValue, right: JsValue) -> JsValue {
-        match (left, right) {
-            (JsValue::StringLiteral(left_str), JsValue::StringLiteral(right_str)) => {
-                let left_offset = self.current_offset as i32;
-                self.emit_data(left_str.clone());
-                let right_offset = self.current_offset as i32;
-                self.emit_data(right_str.clone());
-                self.emit_instruction(Instruction::IntConst(left_offset));
-                self.emit_instruction(Instruction::IntConst(right_offset));
-                self.emit_instruction(Instruction::Call("concatenate_strings".into()));
-                JsValue::StringOffset(self.current_offset as i32)
-            }
-            (JsValue::StringOffset(offset), JsValue::StringLiteral(str)) => {
-                self.emit_instruction(Instruction::IntConst(offset));
-                self.emit_data(str);
-                self.emit_instruction(Instruction::Call("concatenate_strings".into()));
-                JsValue::StringOffset(self.current_offset as i32)
-            }
-            (JsValue::StringOffset(left), JsValue::StringOffset(right)) => {
-                self.emit_instruction(Instruction::IntConst(left));
-                self.emit_instruction(Instruction::IntConst(right));
-                self.emit_instruction(Instruction::Call("concatenate_strings".into()));
-                JsValue::StringOffset(self.current_offset as i32)
-            }
-            something_else => panic!("Invalid string concatenation operands {something_else:#?}",),
-        }
+    fn new_block(&mut self) -> String {
+        let block = format!("block_{}", self.block_index);
+        self.block_index += 1;
+        block
+    }
+
+    fn current_block(&self) -> String {
+        format!("block_{}", self.block_index - 1)
     }
 
     fn emit_data(&mut self, str_value: String) {
@@ -223,6 +248,14 @@ impl WasmGenerator {
         self.current_offset += prefixed_str_value.len();
     }
 
+    pub fn compile_statements(&mut self, stmts: &[Statement]) {
+        let iter = stmts.iter();
+
+        for stmt in iter {
+            stmt.compile(self);
+        }
+    }
+
     fn format_globals(&self) -> String {
         let mut globals = String::new();
         globals.push_str(&format!(
@@ -231,7 +264,7 @@ impl WasmGenerator {
         for (name, value) in &self.globals {
             match value {
                 JsValue::Float(fvalue) => globals.push_str(&format!(
-                    "(global ${} (mut f64) (f64.const {})\n",
+                    "(global ${} (mut f64) (f64.const {}))\n",
                     name, fvalue
                 )),
                 JsValue::Integer(val) | JsValue::StringOffset(val) => globals.push_str(&format!(
@@ -244,14 +277,20 @@ impl WasmGenerator {
         globals
     }
 
-    pub fn get_wat(&self) -> String {
+    fn new_label(&mut self) -> String {
+        let label = format!("label_{}", self.label_index);
+        self.label_index += 1;
+        label
+    }
+
+    pub fn finish(&self) -> String {
         let data_segments = self.data.join("\n");
 
         let default_functions = r#"
             (func $len (param $addr i32) (result i32)
                 local.get $addr
                 call $nullthrow
-                i32.load8_u  ;; Changed to load8_u since we're storing single byte lengths
+                i32.load8_u  ;; changed to load8_u since we're storing single byte lengths
             )
 
 
@@ -296,27 +335,116 @@ impl WasmGenerator {
                 )
             )
 
+
+
             (func $alloc (param $size i32) (result i32)
                 (local $curr_alloc_addr i32)
                 (local $next_alloc_addr i32)
 
-                ;; Get current allocation offset and store it in $curr_alloc_addr
+                ;; get current allocation offset and store it in $curr_alloc_addr
                 global.get $alloc_offset
                 local.set $curr_alloc_addr
 
-                ;; Calculate next allocation address and store it in $next_alloc_addr
+                ;; calculate next allocation address and store it in $next_alloc_addr
                 local.get $curr_alloc_addr
                 local.get $size
                 i32.add
                 local.set $next_alloc_addr
 
-                ;; Update global allocation offset
+                ;; update global allocation offset
                 local.get $next_alloc_addr
                 global.set $alloc_offset
 
-                ;; Return the current allocation address
+                ;; return the current allocation address
                 local.get $curr_alloc_addr
             )
+
+            (func $lowercase (param $addr i32) (result i32)
+                (local $len i32)
+                (local $idx i32)
+                (local $char i32)
+                (local $new_addr i32)
+
+                ;; Get the length of the original string
+            local.get $addr
+            call $len
+            local.set $len
+
+            ;; Allocate memory for the new string (length prefix + content)
+            local.get $len
+            i32.const 1      ;; Add 1 byte for the length prefix
+            i32.add
+            call $alloc
+            local.set $new_addr
+
+            ;; Store the length of the new string at the start
+            local.get $new_addr
+            local.get $len
+            i32.store8
+
+            ;; Initialize index to 0
+            i32.const 0
+            local.set $idx
+
+            ;; Loop to process each character
+            (loop $loop
+            ;; Check if the index is less than the length
+            local.get $idx
+            local.get $len
+            i32.lt_s
+            (if
+                (then
+                ;; Load the character at the source address + index + 1 (skip length prefix)
+                local.get $addr
+                i32.const 1
+                i32.add
+                local.get $idx
+                i32.add
+                i32.load8_u
+                local.set $char
+
+                ;; Check if the character is uppercase (ASCII 65 to 90)
+                local.get $char
+                i32.const 65
+                i32.ge_s
+                local.get $char
+                i32.const 90
+                i32.le_s
+                i32.and
+                (if
+                    (then
+                    ;; Convert to lowercase by adding 32
+                    local.get $char
+                    i32.const 32
+                    i32.add
+                    local.set $char
+                    )
+                )
+
+                ;; Store the character in the new string at new_addr + idx + 1 (after length prefix)
+                local.get $new_addr
+                i32.const 1
+                i32.add
+                local.get $idx
+                i32.add
+                local.get $char
+                i32.store8
+
+                ;; Increment index
+                local.get $idx
+                i32.const 1
+                i32.add
+                local.set $idx
+
+                ;; Continue loop
+                br $loop
+                )
+            )
+            )
+            ;; Return the address of the new lowercase string
+            local.get $new_addr
+    )
+
             ;; concatenate two strings, returning the address of the new string
             (func $concatenate_strings (param $s1 i32) (param $s2 i32) (result i32)
                 (local $len1 i32)
@@ -324,7 +452,7 @@ impl WasmGenerator {
                 (local $addr i32)
                 (local $total_len i32)
 
-                ;; Get lengths from the length prefixes
+                ;; get lengths from the length prefixes
                 local.get $s1
                 call $len
                 local.set $len1
@@ -333,40 +461,40 @@ impl WasmGenerator {
                 call $len
                 local.set $len2
 
-                ;; Calculate total length needed (lengths + combined content + new length byte)
+                ;; calculate total length needed (lengths + combined content + new length byte)
                 local.get $len1
                 local.get $len2
                 i32.add
                 local.tee $total_len
-                i32.const 1    ;; Add 1 for the length prefix
+                i32.const 1    ;; add 1 for the length prefix
                 i32.add
                 call $alloc
                 local.set $addr
 
-                ;; Store new combined length
+                ;; store new combined length
                 local.get $addr
                 local.get $total_len
                 i32.store8
 
-                ;; Copy first string content (skipping its length prefix)
+                ;; copy first string content (skipping its length prefix)
                 local.get $s1
                 i32.const 1
-                i32.add        ;; Skip length byte
+                i32.add        ;; skip length byte
                 local.get $addr
                 i32.const 1
-                i32.add        ;; Skip length byte
+                i32.add        ;; skip length byte
                 local.get $len1
                 call $mem_cpy
 
-                ;; Copy second string content (skipping its length prefix)
+                ;; copy second string content (skipping its length prefix)
                 local.get $s2
                 i32.const 1
-                i32.add        ;; Skip length byte
+                i32.add        ;; skip length byte
                 local.get $addr
                 i32.const 1
                 i32.add
                 local.get $len1
-                i32.add        ;; Position after first string
+                i32.add        ;; position after first string
                 local.get $len2
                 call $mem_cpy
 
@@ -379,7 +507,9 @@ impl WasmGenerator {
             (export "concatenate_strings" (func $concatenate_strings))
         "#;
         let header = format!(
-            "(module\n(import \"\" \"\" (func $print_str(param i32)))\n(memory (export \"memory\") 1) \n {} {} \n {} \n (func (export \"main\") ",
+            "(module\n(import \"\" \"\" (func $print_str(param i32)))
+                \n(import \"\" \"\" (func $print_number(param f64)))
+                \n(memory (export \"memory\") 1) \n {} {} \n {} \n (func (export \"main\") ",
             self.format_globals(),
             data_segments,
             default_functions
@@ -395,326 +525,314 @@ impl WasmGenerator {
 
         format!("{}\n{}\nreturn ){})", header, instructions, default_exports)
     }
+}
 
-    pub fn print_with_line(&mut self) {
-        println!(
-            "{}",
-            self.get_wat()
-                .lines()
-                .enumerate()
-                .map(|(i, line)| format!("{:>3} {}", i + 1, line))
-                .collect::<Vec<String>>()
-                .join("\n")
-        );
+trait CompileEvaluation {
+    fn compile(&self, ctx: &mut CompileContext);
+}
+impl CompileEvaluation for NumericLiteral<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        ctx.stack.push(ValueType::Float);
+        ctx.emit_instruction(Instruction::Const(self.value));
     }
+}
 
-    fn new_block(&mut self) -> String {
-        let block = format!("block_{}", self.block_index);
-        self.block_index += 1;
-        block
+impl CompileEvaluation for StringLiteral<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        let offset = ctx.current_offset as i32;
+        ctx.emit_data(self.value.to_string());
+        ctx.emit_instruction(Instruction::IntConst(offset as i32));
+
+        ctx.stack.push(ValueType::String);
     }
+}
 
-    fn current_block(&self) -> String {
-        format!("block_{}", self.block_index - 1)
+impl CompileEvaluation for ParenthesizedExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        self.expression.compile(ctx);
     }
+}
 
-    fn new_label(&mut self) -> String {
-        let label = format!("label_{}", self.label_index);
-        self.label_index += 1;
-        label
-    }
+impl CompileEvaluation for BooleanLiteral {
+    fn compile(&self, ctx: &mut CompileContext) {}
+}
 
-    fn evaluate_expression(&mut self, expr: &Expression) -> JsValue {
-        match expr {
-            Expression::NumericLiteral(literal) => {
-                self.visit_numeric_literal(literal);
-                JsValue::Float(literal.raw.parse::<f64>().unwrap_or(0.))
+impl CompileEvaluation for CallExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        if let Expression::Identifier(ident) = &self.callee {
+            for arg in &self.arguments {
+                arg.to_expression().compile(ctx);
             }
-            Expression::StringLiteral(literal) => JsValue::StringLiteral(literal.value.to_string()),
-            Expression::ParenthesizedExpression(expr) => self.evaluate_expression(&expr.expression),
-            Expression::UnaryExpression(expr) => {
-                if let Expression::StringLiteral(_) = &expr.argument {
-                    self.emit_data("NaN".into());
-                    JsValue::StringLiteral("NaN".into())
-                } else if let Expression::NumericLiteral(literal) = &expr.argument {
-                    self.visit_numeric_literal(literal);
-                    JsValue::Float(literal.value)
-                } else {
-                    todo!()
+            if ident.name == "__numberLog__" {
+                ctx.emit_instruction(Instruction::Call("print_number".into()));
+            }
+        }
+        if let Expression::StaticMemberExpression(static_member) = &self.callee {
+            static_member.object.compile(ctx);
+            if static_member.property.name == "toLowerCase" {
+                ctx.emit_instruction(Instruction::Call("lowercase".into()));
+            }
+
+            if let Expression::Identifier(obj) = &static_member.object {
+                if obj.name == "console" && static_member.property.name == "log" {
+                    for arg in &self.arguments {
+                        arg.to_expression().compile(ctx);
+                    }
+                    ctx.emit_instruction(Instruction::Call("print_str".into()));
                 }
             }
-            Expression::BinaryExpression(binary) => {
-                let left = self.evaluate_expression(&binary.left);
-                let right = self.evaluate_expression(&binary.right);
-                match binary.operator {
-                    BinaryOperator::Addition => {
-                        if left.is_string() || right.is_string() {
-                            self.handle_string_concat(left, right)
-                        } else {
-                            self.emit_instruction(Instruction::F64Add);
-                            left + right
-                        }
-                    }
-                    BinaryOperator::Subtraction => {
-                        self.emit_instruction(Instruction::Sub);
-                        left - right
-                    }
-                    BinaryOperator::Multiplication => {
-                        self.emit_instruction(Instruction::Mul);
-                        left * right
-                    }
-                    BinaryOperator::Division => {
-                        self.emit_instruction(Instruction::Div);
-                        left / right
-                    }
-                    var => todo!("{:#?}", var),
-                }
-            }
-            var => unimplemented!("{:#?}", var),
         }
     }
 }
 
-impl Display for WasmGenerator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for instruction in &self.instructions {
-            writeln!(f, "{:?}", instruction)?;
+impl CompileEvaluation for BinaryExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        self.left.compile(ctx);
+        self.right.compile(ctx);
+        let left = ctx.stack.pop();
+        let right = ctx.stack.pop();
+
+        match self.operator {
+            BinaryOperator::Addition => {
+                if let (Some(left), Some(right)) = (left, right) {
+                    if left == ValueType::String && right == ValueType::String {
+                        ctx.emit_instruction(Instruction::Call("concatenate_strings".into()));
+                        ctx.stack.push(ValueType::String);
+                    }
+                }
+                ctx.emit_instruction(Instruction::F64Add);
+            }
+            BinaryOperator::Subtraction => {
+                ctx.emit_instruction(Instruction::Sub);
+            }
+            BinaryOperator::LessThan => {
+                ctx.emit_instruction(Instruction::Lt);
+            }
+            BinaryOperator::Multiplication => {
+                ctx.emit_instruction(Instruction::Mul);
+            }
+            BinaryOperator::Equality => {
+                ctx.emit_instruction(Instruction::Eq);
+            }
+            something => unimplemented!("{:#?}", something),
         }
-        Ok(())
     }
 }
 
-impl<'a> Visit<'a> for WasmGenerator {
-    fn visit_break_statement(&mut self, _: &oxc_ast::ast::BreakStatement<'a>) {
-        let new_block = self.new_block();
-        self.emit_instruction(Instruction::Br(new_block));
-    }
-
-    fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
-        let label = self.new_label();
-        let body = &it.body;
-        let instructions_len = &self.instructions.len();
-
-        if let Statement::BlockStatement(block) = body {
-            for statement in &block.body {
-                self.visit_statement(statement);
-            }
-        }
-
-        if let Expression::BinaryExpression(test) = &it.test {
-            self.visit_binary_expression(test);
-            self.emit_instruction(Instruction::BrIf(label.clone()));
-        }
-
-        if self.block_index > 0 {
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Loop(label, instructions));
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Block(self.current_block(), instructions));
-        } else {
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Loop(label, instructions));
+impl CompileEvaluation for UnaryExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        if let Expression::StringLiteral(_) = &self.argument {
+            let offset = ctx.current_offset as i32;
+            ctx.emit_data("NaN".into());
+            ctx.emit_instruction(Instruction::IntConst(offset as i32));
+            ctx.stack.push(ValueType::String);
         }
     }
-    fn visit_string_literal(&mut self, it: &oxc_ast::ast::StringLiteral<'a>) {
-        self.emit_instruction(Instruction::IntConst(self.current_offset as i32));
-        self.emit_data(it.value.to_string());
-    }
+}
 
-    fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
-        let label = self.new_label();
-        let body = &it.body;
-        if let Some(ForStatementInit::VariableDeclaration(init)) = &it.init {
-            for declarator in &init.declarations {
-                self.visit_variable_declarator(declarator);
-            }
-        }
-        let instructions_len = &self.instructions.len();
-        if let Statement::BlockStatement(block) = body {
-            for statement in &block.body {
-                self.visit_statement(statement);
-            }
-        }
-
-        if let Some(update) = &it.update {
-            self.visit_expression(update);
-        }
-
-        if let Some(test) = &it.test {
-            self.visit_expression(test);
-            self.emit_instruction(Instruction::BrIf(label.clone()));
-        }
-        if self.block_index > 0 {
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Loop(label, instructions));
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Block(self.current_block(), instructions));
-        } else {
-            let instructions = self.instructions.split_off(*instructions_len);
-            self.emit_instruction(Instruction::Loop(label, instructions));
-        }
-    }
-    fn visit_numeric_literal(&mut self, it: &NumericLiteral<'a>) {
-        let value = it.raw.parse::<f64>().unwrap();
-        self.emit_instruction(Instruction::Const(value));
-    }
-
-    fn visit_if_statement(&mut self, it: &oxc_ast::ast::IfStatement<'a>) {
-        self.visit_expression(&it.test);
-
-        let instructions_len = self.instructions.len();
-        self.visit_statement(&it.consequent);
-        let true_condition = self.instructions.split_off(instructions_len);
-        let mut else_condition = vec![];
-        if let Some(alternate) = &it.alternate {
-            let instructions_len = self.instructions.len();
-            self.visit_statement(alternate);
-            else_condition = self.instructions.split_off(instructions_len);
-        }
-        self.emit_instruction(Instruction::If(true_condition, else_condition));
-    }
-
-    fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
-        let identifier = it.name.to_string();
-        if let Some(ident) = self.globals.get(&identifier) {
+impl CompileEvaluation for IdentifierReference<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        let identifier = self.name.to_string();
+        if let Some(ident) = ctx.globals.get(&identifier) {
             if ident.is_string() {
                 let offset = ident.get_offset();
-                self.emit_instruction(Instruction::IntConst(*offset.unwrap()));
-                self.emit_instruction(Instruction::GetGlobal(format!(
+                ctx.emit_instruction(Instruction::IntConst(*offset.unwrap()));
+                ctx.emit_instruction(Instruction::GetGlobal(format!(
                     "_______{}_____len",
                     identifier
                 )));
             } else {
-                self.emit_instruction(Instruction::GetGlobal(identifier));
+                ctx.emit_instruction(Instruction::GetGlobal(identifier));
             }
         }
     }
+}
 
-    fn visit_call_expression(&mut self, it: &oxc_ast::ast::CallExpression<'a>) {
-        if let Expression::StaticMemberExpression(expr) = &it.callee {
-            it.arguments.iter().for_each(|arg| {
-                self.visit_expression(arg.to_expression());
-            });
-            if let Some(ident) = expr.object.get_identifier_reference() {
-                let object = ident.name.to_string();
-                let property = expr.property.name.to_string();
-                if object == "console" && property == "log" {
-                    self.emit_instruction(Instruction::Call("print_str".into()));
+impl CompileEvaluation for UpdateExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        let identifier = self.argument.get_identifier().unwrap();
+        ctx.emit_instruction(Instruction::GetGlobal(identifier.into()));
+        ctx.emit_instruction(Instruction::Const(1.));
+        match self.operator {
+            operator::UpdateOperator::Increment => ctx.emit_instruction(Instruction::F64Add),
+            operator::UpdateOperator::Decrement => ctx.emit_instruction(Instruction::Sub),
+        }
+        ctx.emit_instruction(Instruction::SetGlobal(identifier.into()));
+    }
+}
+
+impl CompileEvaluation for ast::Expression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        match self {
+            Expression::BinaryExpression(x) => x.compile(ctx),
+            Expression::StringLiteral(x) => x.compile(ctx),
+            Expression::NumericLiteral(x) => x.compile(ctx),
+            Expression::Identifier(x) => x.compile(ctx),
+            Expression::ParenthesizedExpression(x) => x.compile(ctx),
+            Expression::CallExpression(x) => x.compile(ctx),
+            Expression::UnaryExpression(x) => x.compile(ctx),
+            Expression::AssignmentExpression(x) => x.compile(ctx),
+            Expression::UpdateExpression(x) => x.compile(ctx),
+            something => todo!("{:#?}", something),
+        }
+    }
+}
+
+impl CompileEvaluation for ExpressionStatement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        self.expression.compile(ctx);
+    }
+}
+
+impl CompileEvaluation for VariableDeclaration<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        match self.kind {
+            VariableDeclarationKind::Var => {
+                for decl in &self.declarations {
+                    let ast::BindingPatternKind::BindingIdentifier(identifier) = &decl.id.kind
+                    else {
+                        return;
+                    };
+
+                    let Some(init) = &decl.init else {
+                        return;
+                    };
+
+                    match init {
+                        Expression::NumericLiteral(num) => {
+                            let value = num.raw.parse::<f64>().unwrap();
+                            ctx.globals
+                                .insert(identifier.name.to_string(), JsValue::Float(value));
+                        }
+                        Expression::StringLiteral(literal) => {
+                            let offset = ctx.current_offset as i32;
+                            ctx.globals
+                                .insert(identifier.name.to_string(), JsValue::StringOffset(offset));
+                            literal.compile(ctx);
+                        }
+                        _ => {}
+                    }
                 }
             }
-            if let Expression::StringLiteral(literal) = &expr.object {
-                self.visit_string_literal(literal);
-                let property = expr.property.name.to_string();
-                if property == "indexOf" {}
-            }
-        }
-    }
+            VariableDeclarationKind::Let | VariableDeclarationKind::Const => {
+                for decl in &self.declarations {
+                    let ast::BindingPatternKind::BindingIdentifier(identifier) = &decl.id.kind
+                    else {
+                        return;
+                    };
 
-    fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
-        match &it.expression {
-            Expression::Identifier(identifier) => {
-                self.visit_identifier_reference(identifier);
-            }
-            Expression::BinaryExpression(binary) => {
-                if let Expression::Identifier(ident) = &binary.left {
-                    // TODO: This may be hacky,idk, but it works for now.
-                    // It is used when the variable is unused, and only used as expression
-                    // ```
-                    // 1. let a = 5;
-                    // a - 5;
-                    // 2 + 5;
-                    // ```
-                    // Here a is unused, so we can drop it.
+                    let Some(init) = &decl.init else {
+                        return;
+                    };
 
-                    self.visit_binary_expression(binary);
-                    self.emit_instruction(Instruction::Drop);
-                } else {
-                    self.visit_binary_expression(binary);
+                    match init {
+                        Expression::NumericLiteral(num) => {
+                            let value = num.raw.parse::<f64>().unwrap();
+                            ctx.globals
+                                .insert(identifier.name.to_string(), JsValue::Float(value));
+                        }
+                        Expression::StringLiteral(literal) => {
+                            let offset = ctx.current_offset as i32;
+                            println!("logging offset");
+                            ctx.globals
+                                .insert(identifier.name.to_string(), JsValue::StringOffset(offset));
+                            literal.compile(ctx);
+                        }
+                        _ => {}
+                    }
                 }
             }
-            _ => {
-                self.visit_expression(&it.expression);
-            }
         }
     }
+}
 
-    fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
-        let identifier = it.id.get_identifier().unwrap().into_string();
-        match &it.init {
-            Some(init) => {
-                if let Expression::StringLiteral(string_literal) = init {
-                    self.globals.insert(
-                        identifier.clone(),
-                        JsValue::StringOffset(self.current_offset as i32),
-                    );
-                    self.visit_string_literal(string_literal);
-                } else {
-                    let value = self.evaluate_expression(init);
-                    self.globals.insert(identifier.clone(), value);
-                }
-            }
-            None => {
-                self.globals.insert(identifier.clone(), JsValue::Float(0.));
-            }
+impl CompileEvaluation for AssignmentExpression<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        if let Some(identifier) = self.left.get_identifier() {
+            self.right.compile(ctx);
+            ctx.emit_instruction(Instruction::SetGlobal(identifier.into()));
         }
     }
+}
 
-    fn visit_binary_expression(&mut self, it: &oxc_ast::ast::BinaryExpression<'a>) {
-        if let Expression::Identifier(ident) = &it.left {
-            self.visit_identifier_reference(ident);
+impl CompileEvaluation for ForStatement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        let label = ctx.new_label();
+
+        let body = &self.body;
+
+        let Some(ForStatementInit::VariableDeclaration(init)) = &self.init else {
+            return;
+        };
+        init.compile(ctx);
+        let instructions_len = &ctx.instructions.len();
+        if let Statement::BlockStatement(block) = body {
+            for statement in &block.body {
+                statement.compile(ctx);
+            }
         }
 
-        let left = self.evaluate_expression(&it.left);
-        let right = self.evaluate_expression(&it.right);
-        match it.operator {
-            BinaryOperator::Addition => {
-                if left.is_string() && right.is_string() {
-                    self.handle_string_concat(left, right);
-                } else {
-                    self.emit_instruction(Instruction::F64Add);
-                }
-            }
-            BinaryOperator::Subtraction => {
-                self.emit_instruction(Instruction::Sub);
-            }
-            BinaryOperator::Multiplication => {
-                self.emit_instruction(Instruction::Mul);
-            }
-            BinaryOperator::Division => {
-                self.emit_instruction(Instruction::Div);
-            }
-            BinaryOperator::LessThan => {
-                self.emit_instruction(Instruction::Lt);
-            }
-            BinaryOperator::GreaterThan => {
-                self.emit_instruction(Instruction::Gt);
-            }
-            BinaryOperator::StrictEquality | BinaryOperator::Equality => {
-                self.emit_instruction(Instruction::Eq);
-            }
+        if let Some(update) = &self.update {
+            update.compile(ctx);
+        }
 
-            _ => {}
+        if let Some(test) = &self.test {
+            test.compile(ctx);
+            ctx.emit_instruction(Instruction::BrIf(label.clone()));
+        }
+        if ctx.block_index > 0 {
+            let instructions = ctx.instructions.split_off(*instructions_len);
+            ctx.emit_instruction(Instruction::Loop(label, instructions));
+            let instructions = ctx.instructions.split_off(*instructions_len);
+            ctx.emit_instruction(Instruction::Block(ctx.current_block(), instructions));
+        } else {
+            let instructions = ctx.instructions.split_off(*instructions_len);
+            ctx.emit_instruction(Instruction::Loop(label, instructions));
         }
     }
+}
 
-    fn visit_assignment_expression(&mut self, it: &oxc_ast::ast::AssignmentExpression<'a>) {
-        let identifier = it.left.get_identifier().unwrap();
-        self.visit_expression(&it.right);
-        self.emit_instruction(Instruction::SetGlobal(identifier.into()));
-    }
-
-    fn visit_update_expression(&mut self, it: &oxc_ast::ast::UpdateExpression<'a>) {
-        let identifier = it.argument.get_identifier().unwrap();
-        self.emit_instruction(Instruction::GetGlobal(identifier.into()));
-        self.emit_instruction(Instruction::Const(1.));
-        match it.operator {
-            oxc_syntax::operator::UpdateOperator::Increment => {
-                self.emit_instruction(Instruction::F64Add);
-            }
-            oxc_syntax::operator::UpdateOperator::Decrement => {
-                self.emit_instruction(Instruction::Sub);
-            }
+impl CompileEvaluation for ast::IfStatement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        self.test.compile(ctx);
+        let instructions_len = ctx.instructions.len();
+        self.consequent.compile(ctx);
+        let true_condition = ctx.instructions.split_off(instructions_len);
+        let mut else_condition = vec![];
+        if let Some(alternate) = &self.alternate {
+            let instructions_len = ctx.instructions.len();
+            alternate.compile(ctx);
+            else_condition = ctx.instructions.split_off(instructions_len);
         }
-        self.emit_instruction(Instruction::SetGlobal(identifier.into()));
+        ctx.emit_instruction(Instruction::If(true_condition, else_condition));
+    }
+}
+
+impl CompileEvaluation for ast::BlockStatement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        self.body.iter().for_each(|b| {
+            b.compile(ctx);
+        });
+    }
+}
+
+impl CompileEvaluation for ast::BreakStatement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        let new_block = ctx.new_block();
+        ctx.emit_instruction(Instruction::Br(new_block));
+    }
+}
+
+impl CompileEvaluation for ast::Statement<'_> {
+    fn compile(&self, ctx: &mut CompileContext) {
+        match self {
+            Statement::ExpressionStatement(x) => x.compile(ctx),
+            Statement::VariableDeclaration(x) => x.compile(ctx),
+            Statement::ForStatement(x) => x.compile(ctx),
+            Statement::IfStatement(x) => x.compile(ctx),
+            Statement::BlockStatement(x) => x.compile(ctx),
+            Statement::BreakStatement(x) => x.compile(ctx),
+            something => todo!("{:#?}", something),
+        }
     }
 }
