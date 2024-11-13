@@ -2,6 +2,13 @@ use anyhow::{anyhow, Result};
 use wasmtime::{Caller, Func, Store};
 
 pub fn print_num(store: &mut Store<()>) -> Func {
+    Func::wrap(store, |_: Caller<'_, ()>, num: i32| -> Result<()> {
+        println!("{num}");
+        Ok(())
+    })
+}
+
+pub fn print_float(store: &mut Store<()>) -> Func {
     Func::wrap(store, |_: Caller<'_, ()>, num: f64| -> Result<()> {
         println!("{num}");
         Ok(())

@@ -30,8 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = Module::new(&engine, output)?;
     let mut store = Store::new(&engine, ());
     let print_num = wasm::console::print_num(&mut store);
+    let print_float = wasm::console::print_float(&mut store);
     let print_str = wasm::console::print_str(&mut store);
-    let instance = Instance::new(&mut store, &module, &[print_str.into(), print_num.into()])?;
+    let instance = Instance::new(
+        &mut store,
+        &module,
+        &[print_str.into(), print_num.into(), print_float.into()],
+    )?;
     let main_func = instance.get_typed_func::<(), ()>(&mut store, "main")?;
     main_func.call(&mut store, ())?;
     Ok(())

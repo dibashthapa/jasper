@@ -1,2 +1,1 @@
-"I love" + ('b' + 'a' + 'n' + "a" + "n" + "a")
-
+console.log("hello".substring(1, 14))

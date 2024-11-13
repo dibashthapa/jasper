@@ -1,1 +1,4 @@
-console.log("i love " + ("b" + "a" + +"a" + "a").toLowerCase())
+let a = 1;
+print_float(a + (a += 1));
+
+

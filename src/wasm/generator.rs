@@ -1,10 +1,10 @@
 use oxc_ast::ast::{
-    self, AssignmentExpression, BinaryExpression, BooleanLiteral, CallExpression, Expression,
-    ExpressionStatement, ForStatement, ForStatementInit, IdentifierReference, NumericLiteral,
-    ParenthesizedExpression, Statement, StringLiteral, UnaryExpression, UpdateExpression,
-    VariableDeclaration, VariableDeclarationKind,
+    self, AssignmentExpression, AssignmentTarget, BinaryExpression, BooleanLiteral, CallExpression,
+    Expression, ExpressionStatement, ForStatement, ForStatementInit, IdentifierReference,
+    NumericLiteral, ParenthesizedExpression, Statement, StringLiteral, UnaryExpression,
+    UpdateExpression, VariableDeclaration, VariableDeclarationKind,
 };
-use oxc_syntax::operator::{self, BinaryOperator};
+use oxc_syntax::operator::{self, AssignmentOperator, BinaryOperator};
 use std::{
     collections::HashMap,
     ops::{Add, Div, Mul, Sub},
@@ -445,6 +445,87 @@ impl CompileContext {
             local.get $new_addr
     )
 
+(func $substring (param $s i32) (param f64 f64) 
+    (result i32) 
+    (local $addr i32)
+    (local $i i32)
+    (local $len i32)
+    (local $start i32)
+    (local $end i32)
+    (local $total_len i32)
+
+    ;; Casting
+    local.get 1
+    i32.trunc_f64_s
+    local.set $start
+    local.get 2
+    i32.trunc_f64_s
+    local.set $end
+
+    ;; Calculate the total length
+     local.get $end
+    local.get $start
+    i32.sub
+    local.tee $total_len
+    i32.const 1 
+    i32.add 
+    call $alloc 
+    local.set $addr
+
+    ;; Get the length of the input string
+    local.get $s
+    call $len
+    local.set $len
+
+    ;; Validate the provided start and end indices
+    local.get $start
+    local.get $len
+    i32.lt_u
+    i32.eqz
+    if
+        ;; Start index out of bounds, return empty string
+        local.get $len
+        call $alloc
+        return
+    end
+    local.get $end
+    local.get $len
+    i32.lt_u
+    i32.eqz
+    if
+        ;; End index out of bounds, use the maximum length
+        local.get $len
+        local.set $end
+    end
+
+    ;; Store new combined length
+    local.get $addr 
+    local.get $total_len 
+    i32.store8
+
+
+    ;; Copy the substring characters to the new memory
+    local.get $s
+    i32.const 1
+    i32.add 
+    local.tee $s
+    local.get $start
+    i32.add
+    local.get $addr
+    i32.const 1 
+    i32.add
+    local.tee $addr
+    local.get $total_len
+    call $mem_cpy
+
+    ;; Return the address of the new substring
+    local.get $addr
+    i32.const 1 
+    i32.sub 
+    local.tee $addr
+)
+
+
             ;; concatenate two strings, returning the address of the new string
             (func $concatenate_strings (param $s1 i32) (param $s2 i32) (result i32)
                 (local $len1 i32)
@@ -508,7 +589,8 @@ impl CompileContext {
         "#;
         let header = format!(
             "(module\n(import \"\" \"\" (func $print_str(param i32)))
-                \n(import \"\" \"\" (func $print_number(param f64)))
+                \n(import \"\" \"\" (func $print_number(param i32)))
+                \n(import \"\" \"\" (func $print_float(param f64)))
                 \n(memory (export \"memory\") 1) \n {} {} \n {} \n (func (export \"main\") ",
             self.format_globals(),
             data_segments,
@@ -566,18 +648,26 @@ impl CompileEvaluation for CallExpression<'_> {
             if ident.name == "__numberLog__" {
                 ctx.emit_instruction(Instruction::Call("print_number".into()));
             }
+
+            if ident.name == "print_float" {
+                ctx.emit_instruction(Instruction::Call("print_float".into()));
+            }
         }
         if let Expression::StaticMemberExpression(static_member) = &self.callee {
             static_member.object.compile(ctx);
+            for arg in &self.arguments {
+                arg.to_expression().compile(ctx);
+            }
+
             if static_member.property.name == "toLowerCase" {
                 ctx.emit_instruction(Instruction::Call("lowercase".into()));
+            }
+            if static_member.property.name == "substring" {
+                ctx.emit_instruction(Instruction::Call("substring".into()));
             }
 
             if let Expression::Identifier(obj) = &static_member.object {
                 if obj.name == "console" && static_member.property.name == "log" {
-                    for arg in &self.arguments {
-                        arg.to_expression().compile(ctx);
-                    }
                     ctx.emit_instruction(Instruction::Call("print_str".into()));
                 }
             }
@@ -599,8 +689,9 @@ impl CompileEvaluation for BinaryExpression<'_> {
                         ctx.emit_instruction(Instruction::Call("concatenate_strings".into()));
                         ctx.stack.push(ValueType::String);
                     }
+                } else {
+                    ctx.emit_instruction(Instruction::F64Add);
                 }
-                ctx.emit_instruction(Instruction::F64Add);
             }
             BinaryOperator::Subtraction => {
                 ctx.emit_instruction(Instruction::Sub);
@@ -633,17 +724,8 @@ impl CompileEvaluation for UnaryExpression<'_> {
 impl CompileEvaluation for IdentifierReference<'_> {
     fn compile(&self, ctx: &mut CompileContext) {
         let identifier = self.name.to_string();
-        if let Some(ident) = ctx.globals.get(&identifier) {
-            if ident.is_string() {
-                let offset = ident.get_offset();
-                ctx.emit_instruction(Instruction::IntConst(*offset.unwrap()));
-                ctx.emit_instruction(Instruction::GetGlobal(format!(
-                    "_______{}_____len",
-                    identifier
-                )));
-            } else {
-                ctx.emit_instruction(Instruction::GetGlobal(identifier));
-            }
+        if ctx.globals.contains_key(&identifier) {
+            ctx.emit_instruction(Instruction::GetGlobal(identifier));
         }
     }
 }
@@ -709,8 +791,11 @@ impl CompileEvaluation for VariableDeclaration<'_> {
                             ctx.globals
                                 .insert(identifier.name.to_string(), JsValue::StringOffset(offset));
                             literal.compile(ctx);
+                            ctx.emit_instruction(Instruction::SetGlobal(
+                                identifier.name.to_string(),
+                            ));
                         }
-                        _ => {}
+                        something => unimplemented!("{:#?}", something),
                     }
                 }
             }
@@ -733,12 +818,21 @@ impl CompileEvaluation for VariableDeclaration<'_> {
                         }
                         Expression::StringLiteral(literal) => {
                             let offset = ctx.current_offset as i32;
-                            println!("logging offset");
                             ctx.globals
                                 .insert(identifier.name.to_string(), JsValue::StringOffset(offset));
                             literal.compile(ctx);
                         }
-                        _ => {}
+                        Expression::CallExpression(expr) => {
+                            ctx.globals.insert(
+                                identifier.name.to_string(),
+                                JsValue::StringOffset(ctx.current_offset as i32),
+                            );
+                            expr.compile(ctx);
+                            ctx.emit_instruction(Instruction::SetGlobal(
+                                identifier.name.to_string(),
+                            ));
+                        }
+                        _ => init.compile(ctx),
                     }
                 }
             }
@@ -748,10 +842,27 @@ impl CompileEvaluation for VariableDeclaration<'_> {
 
 impl CompileEvaluation for AssignmentExpression<'_> {
     fn compile(&self, ctx: &mut CompileContext) {
-        if let Some(identifier) = self.left.get_identifier() {
-            self.right.compile(ctx);
-            ctx.emit_instruction(Instruction::SetGlobal(identifier.into()));
+        let is_identifier_ref = match &self.left {
+            ast::AssignmentTarget::ArrayAssignmentTarget(_) => todo!(),
+            ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                identifier.compile(ctx);
+                true
+            }
+            ast::AssignmentTarget::ComputedMemberExpression(expression) => false,
+            ast::AssignmentTarget::ObjectAssignmentTarget(_) => todo!(),
+            ast::AssignmentTarget::PrivateFieldExpression(_) => todo!(),
+            ast::AssignmentTarget::StaticMemberExpression(expression) => false,
+            ast::AssignmentTarget::TSAsExpression(_)
+            | ast::AssignmentTarget::TSSatisfiesExpression(_)
+            | ast::AssignmentTarget::TSNonNullExpression(_)
+            | ast::AssignmentTarget::TSTypeAssertion(_)
+            | ast::AssignmentTarget::TSInstantiationExpression(_) => unreachable!(),
+        };
+
+        if self.operator == AssignmentOperator::Addition {
+            ctx.emit_instruction(Instruction::F64Add);
         }
+        self.right.compile(ctx);
     }
 }
 
