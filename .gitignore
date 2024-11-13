@@ -1,5 +1,6 @@
 /target
-.wat
-.wasm
+random.wat
+random.wasm
 .py
 .txt
+demo/
