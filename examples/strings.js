@@ -1,1 +1,1 @@
-console.log("hello".substring(1, 14))
+__numberLog__("hello".indexOf("ello"))

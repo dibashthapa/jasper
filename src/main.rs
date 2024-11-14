@@ -22,9 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut compiler = CompileContext::default();
     compiler.compile_statements(&program.body);
     let output = compiler.finish();
-    // println!("{}", output);
-    // wasm_generator.visit_program(&ret.program);
-    // let wat = wasm_generator.get_wat();
     fs::write("random.wat", &output)?;
     let engine = Engine::default();
     let module = Module::new(&engine, output)?;

@@ -1,46 +1,14 @@
 use oxc_ast::ast::{
-    self, AssignmentExpression, AssignmentTarget, BinaryExpression, BooleanLiteral, CallExpression,
-    Expression, ExpressionStatement, ForStatement, ForStatementInit, IdentifierReference,
-    NumericLiteral, ParenthesizedExpression, Statement, StringLiteral, UnaryExpression,
-    UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+    self, AssignmentExpression, BinaryExpression, BooleanLiteral, CallExpression, Expression,
+    ExpressionStatement, ForStatement, ForStatementInit, IdentifierReference, NumericLiteral,
+    ParenthesizedExpression, Statement, StringLiteral, UnaryExpression, UpdateExpression,
+    VariableDeclaration, VariableDeclarationKind,
 };
 use oxc_syntax::operator::{self, AssignmentOperator, BinaryOperator};
 use std::{
     collections::HashMap,
     ops::{Add, Div, Mul, Sub},
 };
-
-#[derive(Debug, Clone, PartialEq)]
-enum ExpressionType {
-    Number,
-    String,
-    I64,
-    I32,
-    F64,
-    Function,
-    Unknown,
-}
-
-struct ExpressionContext {
-    expr_type: ExpressionType,
-    string_offset: Option<i32>,
-}
-
-impl ExpressionContext {
-    fn new(expr_type: ExpressionType) -> Option<Self> {
-        Some(Self {
-            expr_type,
-            string_offset: None,
-        })
-    }
-
-    fn with_offset(expr_type: ExpressionType, offset: i32) -> Option<Self> {
-        Some(Self {
-            expr_type,
-            string_offset: Some(offset),
-        })
-    }
-}
 
 pub enum Instruction {
     Const(f64),
@@ -52,7 +20,9 @@ pub enum Instruction {
     I32Add,
     F64Add,
     F32Add,
+    I32TruncF64,
     Loop(String, Vec<Instruction>),
+    F64ConvertI32,
     Block(String, Vec<Instruction>),
     Mul,
     Sub,
@@ -117,6 +87,8 @@ impl std::fmt::Debug for Instruction {
             Self::Br(label) => write!(f, "br ${}", label),
             Self::Drop => write!(f, "drop"),
             Self::Eq => write!(f, "f64.eq"),
+            Self::I32TruncF64 => write!(f, "i32.trunc_sat_f64_s"),
+            Self::F64ConvertI32 => write!(f, "f64.convert_i32_s"),
         }
     }
 }
@@ -190,7 +162,7 @@ impl JsValue {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum ValueType {
     String,
     Integer,
@@ -445,22 +417,23 @@ impl CompileContext {
             local.get $new_addr
     )
 
-(func $substring (param $s i32) (param f64 f64) 
+    (func $get_char (param $addr i32) (param $idx i32) (result i32)
+        local.get $addr 
+        local.get $idx
+        i32.const 1
+        i32.add
+        i32.add
+        i32.load8_u
+    )
+
+
+(func $substring (param $s i32) (param $start i32) (param $end i32)
     (result i32) 
     (local $addr i32)
     (local $i i32)
     (local $len i32)
-    (local $start i32)
-    (local $end i32)
     (local $total_len i32)
 
-    ;; Casting
-    local.get 1
-    i32.trunc_f64_s
-    local.set $start
-    local.get 2
-    i32.trunc_f64_s
-    local.set $end
 
     ;; Calculate the total length
      local.get $end
@@ -581,6 +554,150 @@ impl CompileContext {
 
                 local.get $addr
             )
+
+            (func $compare(param i32 i32) (result i32)
+              (local $len1 i32)
+              (local $len2 i32)
+              (local $index i32)
+              (local $result i32)
+              (local $char1 i32)
+              (local $char2 i32)
+
+              i32.const 1
+              local.set $result ;; Defaults to false
+
+              local.get 0 ;; Get Left String
+              call $len 
+              local.set $len1 
+
+              local.get 1  ;; Get Right String
+              call $len 
+              local.set $len2
+
+              ;; Check if $len == $len2
+              local.get $len1
+              local.get $len2
+              i32.ne 
+
+              if 
+                i32.const 0 
+                return 
+              end
+              
+              i32.const 0 
+              local.set $index 
+
+
+            (block $block 
+                (loop $l
+                        local.get $index 
+                        local.get $len1 
+                        i32.ge_u
+                        br_if $block 
+
+                        local.get 0
+                        local.get $index
+                        call $get_char 
+                        local.set $char1
+
+                        local.get 1
+                        local.get $index 
+                        call $get_char
+                        local.set $char2
+
+                        local.get $char1
+                        local.get $char2
+                        i32.ne 
+                        if 
+                            i32.const 0 
+                            local.set $result 
+                            br $block
+                        end
+
+                        local.get $index 
+                        i32.const 1
+                        i32.add 
+                        local.set $index 
+                        br $l
+
+                    )
+                    )
+
+              local.get $result
+        
+        )
+
+        (func $indexOf (param $s i32)  (param $search_value i32) (param $from_index i32)
+          (result i32)
+          (local $len i32)
+          (local $searchLen i32)
+          (local $i i32)
+
+          ;; Get string length
+          local.get $s
+          call $len
+          local.set $len 
+
+
+          ;; Handle empty search string
+          local.get $search_value
+          call $len
+          local.tee $searchLen
+          ;; If searchLen is zero
+          i32.eqz
+          if
+            local.get $from_index 
+            local.get $len 
+            i32.le_u
+            if
+              local.get $from_index 
+              return
+            end
+          end
+
+
+          ;; Initialize loop counter
+          local.get $from_index
+          local.set $i
+
+          (block $exit
+            (loop $l
+                  ;; Check if we should continue searching
+                  local.get $i ;; 0
+                  local.get $len ;; 5
+                  local.get $searchLen ;; 1
+                  i32.sub ;; 4
+                  i32.gt_s
+                  br_if $exit  ;; Exit if i > len-searchLen
+
+                  ;; Get substring and compare
+                  local.get $s ;; "hello"
+                  local.get $i 
+                  local.get $i 
+                  local.get $searchLen ;; 0 + 1 = 1
+                  i32.add
+                  call $substring ;; Hello, 0, 1 ;; returns h
+                  local.get $search_value ;; 'l'
+                  call $compare ;; 0
+                  i32.const 1
+                  i32.eq
+                  if
+                      local.get $i
+                      return 
+                  end
+
+                  ;; Increment and continue
+                  local.get $i
+                  i32.const 1
+                  i32.add
+                  local.set $i
+                  br $l
+            )
+          )
+
+          ;; No match found
+          i32.const -1
+          )
         "#;
 
         let default_exports = r#"
@@ -614,8 +731,13 @@ trait CompileEvaluation {
 }
 impl CompileEvaluation for NumericLiteral<'_> {
     fn compile(&self, ctx: &mut CompileContext) {
-        ctx.stack.push(ValueType::Float);
-        ctx.emit_instruction(Instruction::Const(self.value));
+        if self.raw.contains(".") {
+            ctx.stack.push(ValueType::Float);
+            ctx.emit_instruction(Instruction::Const(self.value));
+        } else {
+            ctx.stack.push(ValueType::Integer);
+            ctx.emit_instruction(Instruction::IntConst(self.value as i32));
+        }
     }
 }
 
@@ -645,7 +767,7 @@ impl CompileEvaluation for CallExpression<'_> {
             for arg in &self.arguments {
                 arg.to_expression().compile(ctx);
             }
-            if ident.name == "__numberLog__" {
+            if ident.name == "print_int" {
                 ctx.emit_instruction(Instruction::Call("print_number".into()));
             }
 
@@ -664,6 +786,11 @@ impl CompileEvaluation for CallExpression<'_> {
             }
             if static_member.property.name == "substring" {
                 ctx.emit_instruction(Instruction::Call("substring".into()));
+            }
+
+            if static_member.property.name == "indexOf" {
+                ctx.emit_instruction(Instruction::IntConst(0));
+                ctx.emit_instruction(Instruction::Call("indexOf".into()));
             }
 
             if let Expression::Identifier(obj) = &static_member.object {
@@ -685,12 +812,26 @@ impl CompileEvaluation for BinaryExpression<'_> {
         match self.operator {
             BinaryOperator::Addition => {
                 if let (Some(left), Some(right)) = (left, right) {
-                    if left == ValueType::String && right == ValueType::String {
-                        ctx.emit_instruction(Instruction::Call("concatenate_strings".into()));
-                        ctx.stack.push(ValueType::String);
+                    match (left, right) {
+                        (ValueType::String, ValueType::String) => {
+                            ctx.emit_instruction(Instruction::Call("concatenate_strings".into()));
+                            ctx.stack.push(ValueType::String);
+                        }
+                        (ValueType::Integer, ValueType::Integer) => {
+                            ctx.emit_instruction(Instruction::I32Add);
+                            ctx.stack.push(ValueType::Integer);
+                        }
+                        (ValueType::Float, ValueType::Float) => {
+                            ctx.emit_instruction(Instruction::F64Add);
+                            ctx.stack.push(ValueType::Float)
+                        }
+                        (ValueType::Integer, ValueType::Float) => {
+                            ctx.emit_instruction(Instruction::F64ConvertI32);
+                            ctx.emit_instruction(Instruction::F64Add);
+                            ctx.stack.push(ValueType::Float)
+                        }
+                        something => panic!("{:#?}", something),
                     }
-                } else {
-                    ctx.emit_instruction(Instruction::F64Add);
                 }
             }
             BinaryOperator::Subtraction => {
