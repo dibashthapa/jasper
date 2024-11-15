@@ -35,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[print_str.into(), print_num.into(), print_float.into()],
     )?;
     let main_func = instance.get_typed_func::<(), ()>(&mut store, "main")?;
+
     main_func.call(&mut store, ())?;
     Ok(())
 }

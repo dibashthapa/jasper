@@ -1,4 +1,4 @@
-let a = 1;
-print_float(a + (a += 1));
-
+console.log(
+  "bAd".slice(0, 5)
+);
 
