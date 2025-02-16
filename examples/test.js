@@ -1,4 +1,2 @@
-console.log(
-  "bAd".slice(0, 5)
-);
+console.log('\uD83D\uDE00');
 

@@ -46,5 +46,6 @@ Building this compiler has been a challenging yet rewarding experience. It requi
 - https://wiki.mozilla.org/IonMonkey/MIR#Building_MIR
 - https://mp2.dk/techblog/chowjs/
 - https://rynco.me/posts/legacy/aot-compiling-javascript-pt-1/
+- https://tools.meziantou.net/string-info?Text=
 
 

@@ -1,1 +1,1 @@
-__numberLog__("hello".indexOf("ello"))
+console.log("hello" + " dIbash".toLowerCase() + " how are you" + " sanchai ??");

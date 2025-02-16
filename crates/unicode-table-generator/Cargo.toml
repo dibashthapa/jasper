@@ -1,0 +1,6 @@
+[package]
+name = "unicode-table-generator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

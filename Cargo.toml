@@ -1,17 +1,28 @@
+[workspace]
+members = [ "crates/ecma262", "crates/quickjs", "crates/unicode-table-generator", "crates/wasm", "crates/wat"]
+resolver = "2"
+
 [package]
-name = "jswasm"
+name = "jasper"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.89"
-oxc_allocator = {version="0.21.0", features=["serialize"]}
-oxc_ast = "0.21.0"
-oxc_parser = "0.21.0"
-oxc_span = "0.21.0"
-oxc_syntax = { version= "0.21.0", features=["serialize"] }
-serde = "1.0.204"
-serde_json = "1.0.120"
-wasmtime = "25.0.0"
+clap = "4.5.29"
+rand = "0.9.0"
+serde = "1.0.217"
+ucd-parse = "0.1.13"
+wat = { path = "./crates/wat"}
+yaml-rust = "0.4.5"
 
-[features]
+[[bin]]
+name = "wasm"
+path = "crates/wasm/src/main.rs"
+
+[[bin]]
+name = "ecma262-runner"
+path = "crates/ecma262/src/main.rs"
+
+[[bin]]
+name = "unicode-table-generator"
+path = "crates/unicode-table-generator/src/main.rs"

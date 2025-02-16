@@ -6,4 +6,4 @@ if (x == 5) {
     x = x - 4;
   }
 }
-__numberLog__(x);
+print_int(x);
